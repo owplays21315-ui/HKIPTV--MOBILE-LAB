@@ -2,10 +2,11 @@ package com.hkiptv.lab.player
 
 import com.hkiptv.lab.data.model.MediaSource
 import com.hkiptv.lab.data.model.SourceFormat
+import com.hkiptv.lab.data.model.SourceFormatDetector
 import androidx.media3.common.MimeTypes
 
 enum class PlaybackFailureCategory(val label: String) {
-    AUTHENTICATION("Autenticação necessária"), ACCESS_DENIED("Acesso negado"), NOT_FOUND("Mídia não encontrada"), RATE_LIMIT("Limite de requisições"), SERVER("Falha no servidor"), CONNECTION("Falha de conexão"), HTTP("Resposta HTTP inválida"), NONE("Sem falha")
+    AUTHENTICATION("Autenticação necessária"), ACCESS_DENIED("Acesso negado"), NOT_FOUND("Mídia não encontrada"), RATE_LIMIT("Limite de requisições"), SERVER("Falha no servidor"), CONNECTION("Falha de conexão"), HTTP("Resposta HTTP inválida"), REDIRECT("Falha de redirecionamento"), NONE("Sem falha")
 }
 
 data class HeaderPresence(val total: Int, val authorization: Boolean, val cookie: Boolean, val referer: Boolean, val origin: Boolean, val userAgent: Boolean) {
@@ -19,13 +20,19 @@ data class PlaybackDiagnostic(
     val provider: String,
     val quality: String,
     val format: SourceFormat,
-    val status: Int?,
+    val effectiveFormat: SourceFormat,
+    val initialStatus: Int?,
+    val finalStatus: Int?,
+    val redirectCount: Int,
     val category: PlaybackFailureCategory,
     val stage: String,
     val redirected: Boolean,
     val crossHostRedirect: Boolean,
+    val redirectCompleted: Boolean,
+    val redirectFailure: RedirectFailure?,
+    val finalContentType: String?,
     val headers: HeaderPresence
-)
+) { val status: Int? get() = finalStatus ?: initialStatus }
 
 object PlaybackDiagnostics {
     fun category(status: Int?): PlaybackFailureCategory = when (status) {
@@ -40,9 +47,12 @@ object PlaybackDiagnostics {
     }
 
     fun snapshot(source: MediaSource, network: PlaybackNetworkSnapshot, stage: String, statusOverride: Int? = null, failed: Boolean = false): PlaybackDiagnostic {
-        val status = statusOverride ?: network.status
-        val category = if (status == null && !network.connectionFailed && !failed) PlaybackFailureCategory.NONE else category(status)
-        return PlaybackDiagnostic(source.providerName ?: "Não informado", source.quality ?: "Não informada", source.format, status, category, stage, network.redirected, network.crossHostRedirect, HeaderPresence.from(source.headers))
+        val finalStatus = network.finalStatus ?: statusOverride
+        val status = finalStatus ?: network.initialStatus
+        val category = when { network.redirectFailure != null -> PlaybackFailureCategory.REDIRECT; status == null && !network.connectionFailed && !failed -> PlaybackFailureCategory.NONE; else -> category(status) }
+        val detectedFinal = SourceFormatDetector.detect("", network.finalContentType)
+        val effectiveFormat = detectedFinal.takeUnless { it == SourceFormat.UNKNOWN } ?: source.format
+        return PlaybackDiagnostic(source.providerName ?: "Não informado", source.quality ?: "Não informada", source.format, effectiveFormat, network.initialStatus ?: statusOverride, finalStatus, network.redirectCount, category, stage, network.redirected, network.crossHostRedirect, network.redirectCompleted, network.redirectFailure, network.finalContentType, HeaderPresence.from(source.headers))
     }
 
     fun userMessage(diagnostic: PlaybackDiagnostic): String = when (diagnostic.status) {
@@ -52,7 +62,13 @@ object PlaybackDiagnostics {
         429 -> "HTTP 429 — limite de requisições atingido"
         in 500..599 -> "HTTP ${diagnostic.status} — falha no servidor da mídia"
         null -> "Falha de conexão durante ${diagnostic.stage}"
-        else -> "HTTP ${diagnostic.status} — ${diagnostic.category.label}"
+        else -> when (diagnostic.redirectFailure) {
+            RedirectFailure.INSECURE_PROTOCOL -> "Redirecionamento bloqueado para protocolo inseguro"
+            RedirectFailure.PRIVATE_ADDRESS -> "Redirecionamento bloqueado para endereço privado"
+            RedirectFailure.MISSING_LOCATION -> "HTTP ${diagnostic.status} — redirecionamento sem destino válido"
+            RedirectFailure.TOO_MANY_REDIRECTS -> "Loop ou excesso de redirecionamentos"
+            null -> "HTTP ${diagnostic.status} — ${diagnostic.category.label}"
+        }
     }
 }
 

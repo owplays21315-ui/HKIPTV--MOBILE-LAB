@@ -48,7 +48,7 @@ import com.hkiptv.lab.player.*
                         val currentStage = if (currentPosition <= 0) "abertura" else "reprodução"
                         val details = PlaybackDiagnostics.snapshot(selected, observer.snapshot(), currentStage, status, failed = true)
                         diagnostic = details; error = PlaybackDiagnostics.userMessage(details)
-                        Log.e("HKPlayer", "provider=${details.provider}; stage=${details.stage}; format=${details.format}; status=${details.status ?: "n/a"}; category=${details.category}; redirected=${details.redirected}")
+                        Log.e("HKPlayer", "provider=${details.provider}; stage=${details.stage}; format=${details.format}; initialStatus=${details.initialStatus ?: "n/a"}; finalStatus=${details.finalStatus ?: "n/a"}; redirects=${details.redirectCount}; hostChanged=${details.crossHostRedirect}; completed=${details.redirectCompleted}; category=${details.category}")
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         stage = when (state) { Player.STATE_BUFFERING -> if (currentPosition <= 0) "abertura" else "buffering"; Player.STATE_READY -> "reprodução"; Player.STATE_ENDED -> "concluído"; else -> stage }
