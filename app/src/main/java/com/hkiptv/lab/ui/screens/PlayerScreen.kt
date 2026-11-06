@@ -35,9 +35,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.HttpDataSource
-import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.hkiptv.lab.data.model.MediaItem as CatalogItem
@@ -47,32 +45,36 @@ import kotlinx.coroutines.delay
 
 @SuppressLint("UnsafeOptInUsageError")
 @Composable
-fun PlayerScreen(source: MediaSource?, content: CatalogItem?, experimentalHttpPlayback: Boolean, back: () -> Unit) {
+fun PlayerScreen(source: MediaSource?, content: CatalogItem?, experimentalHttpPlayback: Boolean, httpPlaybackSettingLoaded: Boolean, back: () -> Unit) {
     val context = LocalContext.current
     val activity = context.findActivity()
     val originalOrientation = rememberSaveable { activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
     val view = LocalView.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val observer = remember(source, experimentalHttpPlayback) { PlaybackNetworkObserver() }
-    var error by remember(source) { mutableStateOf<String?>(null) }
-    var diagnostic by remember(source) { mutableStateOf<PlaybackDiagnostic?>(null) }
-    var showDiagnostic by remember(source) { mutableStateOf(false) }
-    var stage by remember(source) { mutableStateOf("preparação") }
-    var visualState by remember(source) { mutableStateOf(PlayerVisualState.PREPARING) }
-    var controlsVisible by remember(source) { mutableStateOf(true) }
-    var interactionVersion by remember(source) { mutableIntStateOf(0) }
-    var isSeeking by remember(source) { mutableStateOf(false) }
-    var seekPositionMs by remember(source) { mutableLongStateOf(0L) }
-    var positionMs by remember(source) { mutableLongStateOf(0L) }
-    var durationMs by remember(source) { mutableLongStateOf(0L) }
-    var bufferedPositionMs by remember(source) { mutableLongStateOf(0L) }
+    val playbackKey = Triple(source, experimentalHttpPlayback, httpPlaybackSettingLoaded)
+    val observer = remember(playbackKey) { PlaybackNetworkObserver() }
+    var error by remember(playbackKey) { mutableStateOf<String?>(null) }
+    var diagnostic by remember(playbackKey) { mutableStateOf<PlaybackDiagnostic?>(null) }
+    var showDiagnostic by remember(playbackKey) { mutableStateOf(false) }
+    var stage by remember(playbackKey) { mutableStateOf("preparação") }
+    var visualState by remember(playbackKey) { mutableStateOf(PlayerVisualState.PREPARING) }
+    var controlsVisible by remember(playbackKey) { mutableStateOf(true) }
+    var interactionVersion by remember(playbackKey) { mutableIntStateOf(0) }
+    var isSeeking by remember(playbackKey) { mutableStateOf(false) }
+    var seekPositionMs by remember(playbackKey) { mutableLongStateOf(0L) }
+    var positionMs by remember(playbackKey) { mutableLongStateOf(0L) }
+    var durationMs by remember(playbackKey) { mutableLongStateOf(0L) }
+    var bufferedPositionMs by remember(playbackKey) { mutableLongStateOf(0L) }
     var lifecycleActive by remember { mutableStateOf(true) }
 
-    val player = remember(source, experimentalHttpPlayback) {
+    val player = remember(playbackKey) {
         source?.let { selected ->
-            val httpClient = PlaybackHttpClient.create(selected, observer, PlaybackRedirectPolicy(experimentalHttpEnabled = experimentalHttpPlayback))
-            val dataSource = OkHttpDataSource.Factory(httpClient)
-            ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource)).build().apply {
+            val pipeline = PlaybackPipelineFactory.create(
+                selected,
+                PlaybackSettingState(experimentalHttpPlayback, httpPlaybackSettingLoaded),
+                observer
+            ) ?: return@let null
+            ExoPlayer.Builder(context).setMediaSourceFactory(pipeline.mediaSourceFactory).build().apply {
                 setMediaItem(MediaItem.Builder().setUri(selected.url).apply {
                     PlaybackMimeType.forFormat(selected.format)?.let(::setMimeType)
                 }.build())
@@ -192,7 +194,9 @@ fun PlayerScreen(source: MediaSource?, content: CatalogItem?, experimentalHttpPl
                 })
             }
         )
-        if (player == null) {
+        if (!httpPlaybackSettingLoaded && source != null) {
+            PlayerLoadingIndicator(Modifier.fillMaxSize())
+        } else if (player == null) {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Nenhuma fonte selecionada", color = Color.White)
                 Button(onClick = back, modifier = Modifier.padding(top = 12.dp)) { Text("Voltar") }

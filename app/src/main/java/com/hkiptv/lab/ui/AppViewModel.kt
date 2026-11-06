@@ -11,11 +11,11 @@ import com.hkiptv.lab.data.repository.ProviderRouting
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-data class AppUiState(val providers: List<StoredProvider> = emptyList(), val items: List<MediaItem> = emptyList(), val selected: MediaItem? = null, val sources: List<MediaSource> = emptyList(), val selectedSource: MediaSource? = null, val experimentalHttpPlayback: Boolean = false, val loading: Boolean = false, val error: String? = null)
+data class AppUiState(val providers: List<StoredProvider> = emptyList(), val items: List<MediaItem> = emptyList(), val selected: MediaItem? = null, val sources: List<MediaSource> = emptyList(), val selectedSource: MediaSource? = null, val experimentalHttpPlayback: Boolean = false, val httpPlaybackSettingLoaded: Boolean = false, val loading: Boolean = false, val error: String? = null)
 
 class AppViewModel(private val repository: ProviderRepository, private val http: ProviderHttpClient, private val settings: LabSettingsStorage) : ViewModel() {
     private val mutable = MutableStateFlow(AppUiState())
-    val state = combine(mutable, repository.providers, settings.experimentalHttpPlayback) { ui, providers, experimentalHttp -> ui.copy(providers = providers, experimentalHttpPlayback = experimentalHttp) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
+    val state = combine(mutable, repository.providers, settings.experimentalHttpPlayback) { ui, providers, experimentalHttp -> ui.copy(providers = providers, experimentalHttpPlayback = experimentalHttp, httpPlaybackSettingLoaded = true) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
     init { viewModelScope.launch { repository.refreshManifests() } }
     fun addProvider(url: String) = task { repository.add(url) }
     fun editProvider(old: String, new: String) = task { repository.edit(old, new) }

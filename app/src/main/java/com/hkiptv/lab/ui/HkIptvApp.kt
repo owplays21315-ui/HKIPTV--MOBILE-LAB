@@ -35,7 +35,7 @@ private val destinations = listOf(Destination("home", "Início", Icons.Default.H
             composable("details") { DetailsScreen(state.selected, onBack = { nav.popBackStack() }, onSources = { item -> vm.loadSources(item); nav.navigate("sources") }, onSeasons = { nav.navigate("seasons") }) }
             composable("seasons") { SeasonsScreen(state.selected) { nav.popBackStack() } }
             composable("sources") { SourcesScreen(state.sources, state.loading, onBack = { nav.popBackStack() }) { source -> vm.selectSource(source); nav.navigate("player") } }
-            composable("player") { PlayerScreen(state.selectedSource, state.selected, state.experimentalHttpPlayback) { nav.popBackStack() } }
+            composable("player") { PlayerScreen(state.selectedSource, state.selected, state.experimentalHttpPlayback, state.httpPlaybackSettingLoaded) { nav.popBackStack() } }
         }
     }
 }

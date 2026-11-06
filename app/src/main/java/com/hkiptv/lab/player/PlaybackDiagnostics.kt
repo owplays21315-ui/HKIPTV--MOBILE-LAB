@@ -74,6 +74,15 @@ object PlaybackDiagnostics {
 
     fun userMessage(diagnostic: PlaybackDiagnostic): String {
         if (diagnostic.sensitiveHeadersWithheld && diagnostic.status in setOf(401, 403)) return "A reprodução exige credenciais que não podem ser transmitidas com segurança após o redirecionamento"
+        if (diagnostic.stopReason == PlaybackStopReason.REDIRECT_BLOCKED) {
+            return when (diagnostic.redirectFailure) {
+                RedirectFailure.CLEARTEXT_DISABLED -> "Destino HTTP bloqueado: ative o modo HTTP experimental nos Ajustes"
+                RedirectFailure.PRIVATE_ADDRESS -> "Redirecionamento bloqueado para endereço privado ou local"
+                RedirectFailure.UNSUPPORTED_SCHEME -> "Redirecionamento bloqueado para protocolo não suportado"
+                RedirectFailure.DNS_REBINDING -> "Redirecionamento bloqueado por mudança insegura de DNS"
+                else -> "Próximo destino bloqueado pela política de segurança"
+            }
+        }
         when (diagnostic.stopReason) {
             PlaybackStopReason.REDIRECT_LIMIT_EXCEEDED -> return "Limite seguro de redirecionamentos excedido"
             PlaybackStopReason.REDIRECT_LOOP -> return "Loop de redirecionamento detectado"
