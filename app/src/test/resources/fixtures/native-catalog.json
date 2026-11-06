@@ -1,0 +1,1 @@
+{"id":"native.catalog","name":"Native Catalog","version":"2.0","resources":["catalog","meta","stream"],"types":["movie","series"],"catalogs":[{"type":"movie","id":"popular","name":"Populares","extra":[{"name":"search","isRequired":false}]},{"type":"series","id":"featured","name":"Séries"}],"idPrefixes":["tt","tmdb"]}

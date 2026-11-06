@@ -19,13 +19,13 @@ import com.hkiptv.lab.ui.AppUiState
         Text("Adicione um manifest HTTPS. Ele será validado antes de ser salvo.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedTextField(url, { url = it }, Modifier.fillMaxWidth().padding(top = 12.dp), label = { Text("URL do manifest") }, singleLine = true)
         Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { editing?.let { edit(it, url) } ?: add(url); url = ""; editing = null }, enabled = url.startsWith("https://") && !state.loading) { Text(if (editing == null) "Adicionar e validar" else "Salvar alteração") }
+            Button(onClick = { editing?.let { edit(it, url) } ?: add(url) }, enabled = url.startsWith("https://") && !state.loading) { Text(if (editing == null) "Adicionar e validar" else "Salvar alteração") }
             if (editing != null) TextButton({ editing = null; url = "" }) { Text("Cancelar") }
         }
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) { items(state.providers, key = { it.manifestUrl }) { provider ->
             Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(provider.manifest.name, fontWeight = FontWeight.Bold); Text("v${provider.manifest.version}"); Text(provider.manifest.resources.joinToString().ifBlank { "Sem recursos declarados" }, color = MaterialTheme.colorScheme.onSurfaceVariant) }; Switch(provider.enabled, { enable(provider.manifestUrl, it) }) }
+                Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(provider.manifest.name, fontWeight = FontWeight.Bold); Text("v${provider.manifest.version}"); Text("Recursos: ${provider.manifest.resources.joinToString().ifBlank { "não declarados" }}", color = MaterialTheme.colorScheme.onSurfaceVariant); if (provider.manifest.types.isNotEmpty()) Text("Tipos: ${provider.manifest.types.joinToString()}", color = MaterialTheme.colorScheme.onSurfaceVariant); if (provider.manifest.catalogs.isNotEmpty()) Text("Catálogos: ${provider.manifest.catalogs.joinToString { it.name ?: it.id }}", color = MaterialTheme.colorScheme.onSurfaceVariant); Text(capabilityLabel(provider), color = MaterialTheme.colorScheme.primary) }; Switch(provider.enabled, { enable(provider.manifestUrl, it) }) }
                 if (provider.primary) AssistChip({}, { Text("Principal") })
                 Row { TextButton({ url = provider.manifestUrl; editing = provider.manifestUrl }) { Text("Editar URL") }; TextButton({ primary(provider.manifestUrl) }, enabled = provider.enabled && !provider.primary) { Text("Tornar principal") }; TextButton({ removing = provider }) { Text("Remover") } }
             } }
@@ -33,3 +33,9 @@ import com.hkiptv.lab.ui.AppUiState
     }
     removing?.let { provider -> AlertDialog(onDismissRequest = { removing = null }, title = { Text("Remover ${provider.manifest.name}?") }, text = { Text("As configurações locais deste provedor serão apagadas.") }, confirmButton = { TextButton({ remove(provider.manifestUrl); removing = null }) { Text("Remover") } }, dismissButton = { TextButton({ removing = null }) { Text("Cancelar") } }) }
 }
+
+private fun capabilityLabel(provider: StoredProvider): String = buildList {
+    if (provider.manifest.offersCatalog) add("catálogo")
+    if (provider.manifest.offersMetadata) add("metadados")
+    if (provider.manifest.offersSources) add("fontes")
+}.joinToString(" • ").ifBlank { "sem capacidades reconhecidas" }

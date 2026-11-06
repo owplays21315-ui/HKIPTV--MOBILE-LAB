@@ -21,8 +21,20 @@ class AppViewModel(private val repository: ProviderRepository, private val http:
     fun makePrimary(url: String) = task { repository.setPrimary(url) }
     fun loadCatalog() = task { primary()?.let { mutable.update { state -> state.copy(items = http.catalog(it).items) } } ?: error("Adicione e ative um provedor") }
     fun search(query: String) = task { primary()?.let { mutable.update { state -> state.copy(items = http.search(it, query).items) } } ?: error("Adicione e ative um provedor") }
-    fun select(item: MediaItem) { mutable.update { it.copy(selected = item, sources = emptyList()) } }
-    fun loadSources(id: String) = task { primary()?.let { mutable.update { state -> state.copy(sources = http.sources(it, id).sources) } } ?: error("Nenhum provedor principal") }
+    fun select(item: MediaItem) {
+        mutable.update { it.copy(selected = item, sources = emptyList()) }
+        val metadataProvider = state.value.providers.firstOrNull { it.enabled && it.primary && it.manifest.offersMetadata }
+            ?: state.value.providers.firstOrNull { it.enabled && it.manifest.offersMetadata }
+        metadataProvider?.let { provider -> task { mutable.update { current -> current.copy(selected = http.metadata(provider, item.type, item.id)) } } }
+    }
+    fun loadSources(type: String, id: String) = task {
+        val providers = state.value.providers.filter { it.enabled && it.manifest.offersSources }
+        if (providers.isEmpty()) error("Nenhum provedor ativo oferece fontes")
+        val attempts = providers.map { provider -> runCatching { http.sources(provider, type, id).sources } }
+        val results = attempts.mapNotNull { it.getOrNull() }.flatten()
+        mutable.update { current -> current.copy(sources = results) }
+        if (results.isEmpty()) throw attempts.firstNotNullOfOrNull { it.exceptionOrNull() } ?: error("Nenhuma fonte foi retornada pelos provedores ativos")
+    }
     fun selectSource(source: MediaSource) { mutable.update { it.copy(selectedSource = source) } }
     fun clearError() { mutable.update { it.copy(error = null) } }
     private fun primary() = state.value.providers.firstOrNull { it.primary && it.enabled }

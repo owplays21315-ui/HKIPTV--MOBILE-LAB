@@ -46,12 +46,12 @@ import com.hkiptv.lab.ui.AppUiState
     }
 }
 
-@Composable fun DetailsScreen(item: MediaItem?, onBack: () -> Unit, onSources: (String) -> Unit, onSeasons: () -> Unit) = Page("Detalhes", onBack) {
+@Composable fun DetailsScreen(item: MediaItem?, onBack: () -> Unit, onSources: (String, String) -> Unit, onSeasons: () -> Unit) = Page("Detalhes", onBack) {
     if (item == null) return@Page EmptyState("Item não encontrado")
     Text(item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
     item.description?.let { Text(it, Modifier.padding(vertical = 12.dp)) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button({ onSources(item.id) }) { Text("Selecionar fonte") }
+        Button({ onSources(item.type, item.id) }) { Text("Selecionar fonte") }
         if (item.seasons.isNotEmpty()) OutlinedButton(onSeasons) { Text("Temporadas") }
     }
 }
@@ -64,7 +64,7 @@ import com.hkiptv.lab.ui.AppUiState
 @Composable fun SourcesScreen(sources: List<MediaSource>, loading: Boolean, onBack: () -> Unit, play: (MediaSource) -> Unit) = Page("Fontes", onBack) {
     if (loading) CircularProgressIndicator()
     else if (sources.isEmpty()) EmptyState("Nenhuma fonte compatível foi retornada")
-    else LazyColumn { items(sources, key = { it.id }) { source -> ListItem(headlineContent = { Text(source.name) }, modifier = Modifier.clickable { play(source) }, supportingContent = { Text(source.format.name) }, trailingContent = { Text("Reproduzir", color = MaterialTheme.colorScheme.primary) }) } }
+    else LazyColumn { items(sources, key = { it.id + it.url.hashCode() }) { source -> ListItem(headlineContent = { Text(source.name) }, modifier = Modifier.clickable { play(source) }, supportingContent = { Text(listOfNotNull(source.quality, source.description, source.format.name).joinToString(" • ")) }, trailingContent = { Text("Reproduzir", color = MaterialTheme.colorScheme.primary) }) } }
 }
 
 @Composable fun SettingsScreen() = Page("Configurações") {

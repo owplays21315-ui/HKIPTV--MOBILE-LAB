@@ -1,0 +1,1 @@
+{"id":"hk.synthetic","name":"HK Synthetic","version":"1.0","resources":["catalog","metadata","sources"],"endpoints":{"catalog":"catalog.json","metadata":"metadata/{id}.json","sources":"sources/{id}.json"}}

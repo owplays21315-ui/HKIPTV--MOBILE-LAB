@@ -27,7 +27,20 @@ Aplicativo Android independente para testar provedores declarados por manifests 
 }
 ```
 
-As URLs devem usar HTTPS. Endpoints relativos são resolvidos a partir da URL do manifest. `{query}` e `{id}` são substituídos pelo aplicativo. Respostas de catálogo/busca usam `{ "items": [...] }`; fontes usam `{ "sources": [...] }`, com formato `mp4` ou `hls`.
+As URLs devem usar HTTPS. Endpoints relativos são resolvidos a partir da URL do manifest. `{query}`, `{type}` e `{id}` são substituídos pelo aplicativo. Respostas de catálogo/busca usam `{ "items": [...] }`; fontes usam `{ "sources": [...] }`, com formato `mp4` ou `hls`.
+
+### Formato nativo adicional
+
+Também são reconhecidos manifests com `resources`, `types`, `catalogs` e `idPrefixes`, sem exigir o bloco `endpoints`. Uma URL direta `/manifest.json` pode ser usada; ao receber HTML ou HTTP 404 em uma URL raiz, o aplicativo tenta o caminho `/manifest.json` preservando segmentos e parâmetros de configuração.
+
+Para esse formato, as rotas são derivadas localmente:
+
+- `catalog/{type}/{id}.json`
+- `catalog/{type}/{id}/{extras}.json`
+- `meta/{type}/{id}.json`
+- `stream/{type}/{id}.json`
+
+Provedores somente de streams são aceitos e podem fornecer fontes para itens descobertos por outro provedor ativo. Fontes continuam exigindo seleção manual. O aplicativo não inclui SDKs de outros clientes, não altera autenticação e não registra URLs, headers ou tokens nos logs.
 
 ## Desenvolvimento
 

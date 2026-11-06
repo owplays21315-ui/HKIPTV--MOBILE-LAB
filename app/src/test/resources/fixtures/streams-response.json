@@ -1,0 +1,1 @@
+{"streams":[{"name":"Synthetic 1080p","description":"Fonte local de teste","url":"https://example.invalid/video/master.m3u8?token=synthetic","behaviorHints":{"proxyHeaders":{"request":{"Referer":"https://example.invalid/"}}}},{"name":"Synthetic MP4","url":"https://example.invalid/video.mp4"},{"name":"Sem URL","torrentHash":"0000000000000000000000000000000000000000"}]}

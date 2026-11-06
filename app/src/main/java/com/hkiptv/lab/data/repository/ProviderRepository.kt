@@ -13,15 +13,15 @@ class ProviderRepository(private val storage: ProviderStorage, private val http:
         val normalized = url.trim()
         val current = providers.first()
         require(current.none { it.manifestUrl == normalized }) { "Este manifest já foi adicionado" }
-        val manifest = http.fetchManifest(normalized)
+        val fetched = http.fetchManifest(normalized)
         val first = current.isEmpty()
-        storage.save(current + StoredProvider(normalized, manifest, enabled = true, primary = first))
+        storage.save(current + StoredProvider(fetched.resolvedUrl, fetched.manifest, enabled = true, primary = first))
     }
     suspend fun edit(oldUrl: String, newUrl: String) {
         val current = providers.first()
         val old = current.firstOrNull { it.manifestUrl == oldUrl } ?: error("Provedor não encontrado")
-        val manifest = http.fetchManifest(newUrl.trim())
-        storage.save(current.map { if (it.manifestUrl == oldUrl) old.copy(manifestUrl = newUrl.trim(), manifest = manifest) else it })
+        val fetched = http.fetchManifest(newUrl.trim())
+        storage.save(current.map { if (it.manifestUrl == oldUrl) old.copy(manifestUrl = fetched.resolvedUrl, manifest = fetched.manifest) else it })
     }
     suspend fun remove(url: String) {
         storage.save(ProviderRules.remove(providers.first(), url))
