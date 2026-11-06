@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable enum class ProviderProtocol { @SerialName("hk") HK, @SerialName("native_addon") NATIVE_ADDON }
+enum class IdentifierKind(val label: String) { IMDB("IMDb"), TMDB("TMDB"), OTHER("outro") }
 
 @Serializable
 data class ProviderManifest(
@@ -17,7 +18,8 @@ data class ProviderManifest(
     val protocol: ProviderProtocol = ProviderProtocol.HK,
     val types: List<String> = emptyList(),
     val catalogs: List<ProviderCatalog> = emptyList(),
-    val idPrefixes: List<String> = emptyList()
+    val idPrefixes: List<String> = emptyList(),
+    val resourceDetails: List<ProviderResource> = emptyList()
 ) {
     val offersCatalog: Boolean get() = endpoints.catalog != null || catalogs.isNotEmpty()
     val offersMetadata: Boolean get() = endpoints.metadata != null || "meta" in resources
@@ -25,10 +27,11 @@ data class ProviderManifest(
 }
 
 @Serializable data class ProviderEndpoints(val catalog: String? = null, val search: String? = null, val metadata: String? = null, val sources: String? = null)
+@Serializable data class ProviderResource(val name: String, val types: List<String> = emptyList(), val idPrefixes: List<String> = emptyList())
 @Serializable data class ProviderCatalog(val type: String, val id: String, val name: String? = null, val extra: List<CatalogExtra> = emptyList())
 @Serializable data class CatalogExtra(val name: String, val required: Boolean = false, val options: List<String> = emptyList())
 @Serializable data class CatalogResponse(val items: List<MediaItem> = emptyList())
-@Serializable data class MediaItem(val id: String, val title: String, val description: String? = null, val poster: String? = null, val type: String = "movie", val year: Int? = null, val seasons: List<Season> = emptyList())
+@Serializable data class MediaItem(val id: String, val title: String, val description: String? = null, val poster: String? = null, val type: String = "movie", val year: Int? = null, val seasons: List<Season> = emptyList(), val identifiers: Map<String, String> = emptyMap())
 @Serializable data class Season(val number: Int, val title: String? = null, val episodes: List<Episode> = emptyList())
 @Serializable data class Episode(val id: String, val number: Int, val title: String, val description: String? = null, val season: Int? = null)
 @Serializable data class SourcesResponse(val sources: List<MediaSource> = emptyList())

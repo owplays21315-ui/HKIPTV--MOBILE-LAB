@@ -17,6 +17,13 @@ class ProviderRepository(private val storage: ProviderStorage, private val http:
         val first = current.isEmpty()
         storage.save(current + StoredProvider(fetched.resolvedUrl, fetched.manifest, enabled = true, primary = first))
     }
+    suspend fun refreshManifests() {
+        val current = providers.first()
+        val refreshed = current.map { stored ->
+            runCatching { http.fetchManifest(stored.manifestUrl) }.getOrNull()?.let { fetched -> stored.copy(manifestUrl = fetched.resolvedUrl, manifest = fetched.manifest) } ?: stored
+        }
+        if (refreshed != current) storage.save(refreshed)
+    }
     suspend fun edit(oldUrl: String, newUrl: String) {
         val current = providers.first()
         val old = current.firstOrNull { it.manifestUrl == oldUrl } ?: error("Provedor não encontrado")

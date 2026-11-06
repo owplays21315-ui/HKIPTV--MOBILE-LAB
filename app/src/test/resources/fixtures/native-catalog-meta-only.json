@@ -1,0 +1,1 @@
+{"id":"native.catalog.meta","name":"Catalog and Meta","version":"1.2","resources":[{"name":"catalog","types":["movie","series"]},{"name":"meta","types":["movie","series"]}],"types":["movie","series"],"catalogs":[{"type":"movie","id":"popular","name":"Populares"}],"idPrefixes":[]}

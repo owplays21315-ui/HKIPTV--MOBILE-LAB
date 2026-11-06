@@ -30,7 +30,10 @@ class ManifestParser(private val json: Json = protocolJson) {
     }
 
     private fun parseNative(root: JsonObject): ProviderManifest {
-        val resources = root["resources"].stringOrObjectNames()
+        val defaultTypes = root["types"].strings()
+        val defaultPrefixes = root["idPrefixes"].strings()
+        val resourceDetails = root["resources"].resourceDetails(defaultTypes, defaultPrefixes)
+        val resources = resourceDetails.map { it.name }
         if (resources.isEmpty()) throw MissingManifestFieldException("resources")
         val catalogs = root["catalogs"]?.arrayOrEmpty()?.mapNotNull { element ->
             val item = element as? JsonObject ?: return@mapNotNull null
@@ -41,7 +44,7 @@ class ManifestParser(private val json: Json = protocolJson) {
                 extra.text("name")?.let { CatalogExtra(it, extra["isRequired"]?.jsonPrimitive?.booleanOrNull == true, extra["options"].strings()) }
             }.orEmpty())
         }.orEmpty()
-        return ProviderManifest(requiredText(root, "id"), requiredText(root, "name"), requiredText(root, "version"), root.text("description"), resources, protocol = ProviderProtocol.NATIVE_ADDON, types = root["types"].strings(), catalogs = catalogs, idPrefixes = root["idPrefixes"].strings())
+        return ProviderManifest(requiredText(root, "id"), requiredText(root, "name"), requiredText(root, "version"), root.text("description"), resources, protocol = ProviderProtocol.NATIVE_ADDON, types = defaultTypes, catalogs = catalogs, idPrefixes = defaultPrefixes, resourceDetails = resourceDetails)
     }
 
     private fun requiredText(root: JsonObject, name: String) = root.text(name)?.takeIf { it.isNotBlank() } ?: throw MissingManifestFieldException(name)
@@ -49,7 +52,11 @@ class ManifestParser(private val json: Json = protocolJson) {
 
 private fun JsonObject.text(name: String) = this[name]?.jsonPrimitive?.contentOrNull
 private fun JsonElement?.strings() = (this as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
-private fun JsonElement?.stringOrObjectNames() = (this as? JsonArray)?.mapNotNull { element -> when (element) { is JsonPrimitive -> element.contentOrNull; is JsonObject -> element.text("name"); else -> null } }.orEmpty()
+private fun JsonElement?.resourceDetails(defaultTypes: List<String>, defaultPrefixes: List<String>) = (this as? JsonArray)?.mapNotNull { element -> when (element) {
+    is JsonPrimitive -> element.contentOrNull?.takeIf { it.isNotBlank() }?.let { ProviderResource(it, defaultTypes, defaultPrefixes) }
+    is JsonObject -> element.text("name")?.takeIf { it.isNotBlank() }?.let { ProviderResource(it, element["types"].strings().ifEmpty { defaultTypes }, element["idPrefixes"].strings().ifEmpty { defaultPrefixes }) }
+    else -> null
+} }.orEmpty()
 private fun JsonElement.arrayOrEmpty() = this as? JsonArray ?: JsonArray(emptyList())
 
 val protocolJson = Json { ignoreUnknownKeys = true; explicitNulls = false; encodeDefaults = true }

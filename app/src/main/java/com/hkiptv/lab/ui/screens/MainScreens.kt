@@ -46,12 +46,12 @@ import com.hkiptv.lab.ui.AppUiState
     }
 }
 
-@Composable fun DetailsScreen(item: MediaItem?, onBack: () -> Unit, onSources: (String, String) -> Unit, onSeasons: () -> Unit) = Page("Detalhes", onBack) {
+@Composable fun DetailsScreen(item: MediaItem?, onBack: () -> Unit, onSources: (MediaItem) -> Unit, onSeasons: () -> Unit) = Page("Detalhes", onBack) {
     if (item == null) return@Page EmptyState("Item não encontrado")
     Text(item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
     item.description?.let { Text(it, Modifier.padding(vertical = 12.dp)) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button({ onSources(item.type, item.id) }) { Text("Selecionar fonte") }
+        Button({ onSources(item) }) { Text("Selecionar fonte") }
         if (item.seasons.isNotEmpty()) OutlinedButton(onSeasons) { Text("Temporadas") }
     }
 }

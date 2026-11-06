@@ -17,6 +17,9 @@ object ManifestUrlResolver {
         val base = URI(manifestUrl)
         val resolved = base.resolve(relativeRoute)
         val query = listOfNotNull(base.rawQuery, resolved.rawQuery).filter { it.isNotBlank() }.distinct().joinToString("&").ifBlank { null }
-        return URI(resolved.scheme, resolved.rawAuthority, resolved.rawPath, query, null).toString()
+        return buildString {
+            append(resolved.scheme); append("://"); append(resolved.rawAuthority); append(resolved.rawPath)
+            query?.let { append('?'); append(it) }
+        }
     }
 }

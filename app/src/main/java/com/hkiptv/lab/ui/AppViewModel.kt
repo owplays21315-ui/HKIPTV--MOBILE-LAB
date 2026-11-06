@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.hkiptv.lab.data.model.*
 import com.hkiptv.lab.data.remote.ProviderHttpClient
 import com.hkiptv.lab.data.repository.ProviderRepository
+import com.hkiptv.lab.data.repository.ProviderRouting
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -14,6 +15,7 @@ data class AppUiState(val providers: List<StoredProvider> = emptyList(), val ite
 class AppViewModel(private val repository: ProviderRepository, private val http: ProviderHttpClient) : ViewModel() {
     private val mutable = MutableStateFlow(AppUiState())
     val state = combine(mutable, repository.providers) { ui, providers -> ui.copy(providers = providers) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
+    init { viewModelScope.launch { repository.refreshManifests() } }
     fun addProvider(url: String) = task { repository.add(url) }
     fun editProvider(old: String, new: String) = task { repository.edit(old, new) }
     fun removeProvider(url: String) = task { repository.remove(url) }
@@ -23,14 +25,19 @@ class AppViewModel(private val repository: ProviderRepository, private val http:
     fun search(query: String) = task { primary()?.let { mutable.update { state -> state.copy(items = http.search(it, query).items) } } ?: error("Adicione e ative um provedor") }
     fun select(item: MediaItem) {
         mutable.update { it.copy(selected = item, sources = emptyList()) }
-        val metadataProvider = state.value.providers.firstOrNull { it.enabled && it.primary && it.manifest.offersMetadata }
-            ?: state.value.providers.firstOrNull { it.enabled && it.manifest.offersMetadata }
-        metadataProvider?.let { provider -> task { mutable.update { current -> current.copy(selected = http.metadata(provider, item.type, item.id)) } } }
+        val targets = ProviderRouting.targets(state.value.providers, "meta", item)
+        val target = targets.firstOrNull { it.provider.primary } ?: targets.firstOrNull()
+        target?.let { selected -> task { mutable.update { current -> current.copy(selected = http.metadata(selected.provider, item, selected.identifier)) } } }
     }
-    fun loadSources(type: String, id: String) = task {
+    fun loadSources(item: MediaItem) = task {
         val providers = state.value.providers.filter { it.enabled && it.manifest.offersSources }
         if (providers.isEmpty()) error("Nenhum provedor ativo oferece fontes")
-        val attempts = providers.map { provider -> runCatching { http.sources(provider, type, id).sources } }
+        val targets = ProviderRouting.targets(providers, "stream", item)
+        if (targets.isEmpty()) {
+            val kinds = buildList { add(item.id); addAll(item.identifiers.values) }.map { ProviderRouting.identifierKind(it).label }.distinct().joinToString("/")
+            error("Nenhum provedor de fontes aceita o tipo ${item.type} com identificador $kinds")
+        }
+        val attempts = targets.map { target -> runCatching { http.sources(target.provider, item.type, target.identifier).sources } }
         val results = attempts.mapNotNull { it.getOrNull() }.flatten()
         mutable.update { current -> current.copy(sources = results) }
         if (results.isEmpty()) throw attempts.firstNotNullOfOrNull { it.exceptionOrNull() } ?: error("Nenhuma fonte foi retornada pelos provedores ativos")
