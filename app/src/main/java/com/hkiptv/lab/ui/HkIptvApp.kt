@@ -19,9 +19,13 @@ private val destinations = listOf(Destination("home", "Início", Icons.Default.H
     val state by vm.state.collectAsState()
     val nav = rememberNavController()
     val current by nav.currentBackStackEntryAsState()
+    val playerVisible = current?.destination?.route == "player"
     state.error?.let { message -> AlertDialog(onDismissRequest = vm::clearError, confirmButton = { TextButton(onClick = vm::clearError) { Text("OK") } }, title = { Text("Não foi possível concluir") }, text = { Text(message) }) }
-    Scaffold(bottomBar = {
-        NavigationBar { destinations.forEach { item -> NavigationBarItem(selected = current?.destination?.route == item.route, onClick = { nav.navigate(item.route) { launchSingleTop = true; popUpTo("home") { saveState = true }; restoreState = true } }, icon = { Icon(item.icon, null) }, label = { Text(item.label) }) } }
+    Scaffold(
+        containerColor = if (playerVisible) androidx.compose.ui.graphics.Color.Black else MaterialTheme.colorScheme.background,
+        contentWindowInsets = if (playerVisible) WindowInsets(0, 0, 0, 0) else ScaffoldDefaults.contentWindowInsets,
+        bottomBar = {
+        if (!playerVisible) NavigationBar { destinations.forEach { item -> NavigationBarItem(selected = current?.destination?.route == item.route, onClick = { nav.navigate(item.route) { launchSingleTop = true; popUpTo("home") { saveState = true }; restoreState = true } }, icon = { Icon(item.icon, null) }, label = { Text(item.label) }) } }
     }) { padding ->
         NavHost(nav, "home", Modifier.padding(padding)) {
             composable("home") { HomeScreen(state, vm::loadCatalog) { vm.select(it); nav.navigate("details") } }
@@ -31,7 +35,7 @@ private val destinations = listOf(Destination("home", "Início", Icons.Default.H
             composable("details") { DetailsScreen(state.selected, onBack = { nav.popBackStack() }, onSources = { item -> vm.loadSources(item); nav.navigate("sources") }, onSeasons = { nav.navigate("seasons") }) }
             composable("seasons") { SeasonsScreen(state.selected) { nav.popBackStack() } }
             composable("sources") { SourcesScreen(state.sources, state.loading, onBack = { nav.popBackStack() }) { source -> vm.selectSource(source); nav.navigate("player") } }
-            composable("player") { PlayerScreen(state.selectedSource, state.experimentalHttpPlayback) { nav.popBackStack() } }
+            composable("player") { PlayerScreen(state.selectedSource, state.selected, state.experimentalHttpPlayback) { nav.popBackStack() } }
         }
     }
 }
