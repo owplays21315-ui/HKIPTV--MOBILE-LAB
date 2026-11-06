@@ -37,7 +37,7 @@ class NativeProtocolAdapter(private val get: suspend (String, Map<String, String
         if (!provider.manifest.offersSources) throw ProviderNetworkException("O provedor não oferece fontes")
         val raw = request(provider, "stream", type, id, ManifestUrlResolver.route(provider.manifestUrl, "stream/${encode(type)}/${encode(id)}.json"))
         val streams = decodeObject(raw)["streams"].objects()
-        return SourcesResponse(streams.mapIndexedNotNull { index, stream -> streamToSource(index, stream) })
+        return SourcesResponse(streams.mapIndexedNotNull { index, stream -> streamToSource(index, stream, provider.manifest.name) })
     }
 
     private fun mediaFromMeta(meta: JsonObject, includeEpisodes: Boolean = false, fallback: MediaItem? = null): MediaItem? {
@@ -57,16 +57,15 @@ class NativeProtocolAdapter(private val get: suspend (String, Map<String, String
         return MediaItem(id, title, meta.text("description") ?: fallback?.description, meta.text("poster") ?: fallback?.poster, fallback?.type ?: meta.text("type") ?: "movie", meta.int("year") ?: fallback?.year, seasons.ifEmpty { fallback?.seasons.orEmpty() }, identifiers)
     }
 
-    private fun streamToSource(index: Int, stream: JsonObject): MediaSource? {
+    private fun streamToSource(index: Int, stream: JsonObject, providerName: String): MediaSource? {
         val url = stream.text("url") ?: return null
         val name = stream.text("name") ?: "Fonte ${index + 1}"
         val description = stream.text("description") ?: stream.text("title")
         val quality = qualityRegex.find(listOfNotNull(name, description).joinToString(" "))?.value
         val requestHeaders = (((stream["behaviorHints"] as? JsonObject)?.get("proxyHeaders") as? JsonObject)?.get("request") as? JsonObject).stringMap()
         val directHeaders = (stream["headers"] as? JsonObject).stringMap()
-        val cleanPath = url.substringBefore('?').lowercase()
-        val format = if (cleanPath.endsWith(".m3u8") || stream.text("type")?.contains("hls", true) == true) SourceFormat.HLS else SourceFormat.MP4
-        return MediaSource("stream-$index", name, url, format, description, quality, requestHeaders + directHeaders, verified = false)
+        val format = SourceFormatDetector.detect(url, stream.text("type"))
+        return MediaSource("stream-$index", name, url, format, description, quality, requestHeaders + directHeaders, verified = false, providerName = providerName)
     }
 
     private fun decodeObject(raw: String) = try { protocolJson.parseToJsonElement(raw).jsonObject } catch (error: Exception) { throw ProviderResponseException("Resposta JSON do provedor inválida", error) }

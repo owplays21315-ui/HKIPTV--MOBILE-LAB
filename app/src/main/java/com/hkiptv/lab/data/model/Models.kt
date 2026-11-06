@@ -35,6 +35,6 @@ data class ProviderManifest(
 @Serializable data class Season(val number: Int, val title: String? = null, val episodes: List<Episode> = emptyList())
 @Serializable data class Episode(val id: String, val number: Int, val title: String, val description: String? = null, val season: Int? = null)
 @Serializable data class SourcesResponse(val sources: List<MediaSource> = emptyList())
-@Serializable data class MediaSource(val id: String, val name: String, val url: String, val format: SourceFormat, val description: String? = null, val quality: String? = null, val headers: Map<String, String> = emptyMap(), val verified: Boolean = false)
-@Serializable enum class SourceFormat { @SerialName("mp4") MP4, @SerialName("hls") HLS }
+@Serializable data class MediaSource(val id: String, val name: String, val url: String, val format: SourceFormat, val description: String? = null, val quality: String? = null, val headers: Map<String, String> = emptyMap(), val verified: Boolean = false, val providerName: String? = null)
+@Serializable enum class SourceFormat { @SerialName("mp4") MP4, @SerialName("hls") HLS, @SerialName("unknown") UNKNOWN }
 @Serializable data class StoredProvider(val manifestUrl: String, val manifest: ProviderManifest, val enabled: Boolean = true, val primary: Boolean = false)

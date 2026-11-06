@@ -60,7 +60,10 @@ class ProviderHttpClient(
     }
 
     suspend fun sources(provider: StoredProvider, type: String, id: String): SourcesResponse = when (provider.manifest.protocol) {
-        ProviderProtocol.HK -> decodeHk(provider, provider.manifest.endpoints.sources?.replace("{type}", encode(type))?.replace("{id}", encode(id)), "fontes")
+        ProviderProtocol.HK -> {
+            val response: SourcesResponse = decodeHk(provider, provider.manifest.endpoints.sources?.replace("{type}", encode(type))?.replace("{id}", encode(id)), "fontes")
+            response.copy(sources = response.sources.map { source -> source.copy(providerName = source.providerName ?: provider.manifest.name) })
+        }
         ProviderProtocol.NATIVE_ADDON -> native.sources(provider, type, id)
     }
 
