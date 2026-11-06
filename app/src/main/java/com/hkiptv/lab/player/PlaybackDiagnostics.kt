@@ -26,6 +26,7 @@ data class PlaybackDiagnostic(
     val finalStatus: Int?,
     val initialProtocol: String?,
     val finalProtocol: String?,
+    val requestStage: PlaybackRequestStage,
     val redirectCount: Int,
     val category: PlaybackFailureCategory,
     val stage: String,
@@ -69,10 +70,11 @@ object PlaybackDiagnostics {
         val detectedFinal = SourceFormatDetector.detect("", network.finalContentType)
         val effectiveFormat = detectedFinal.takeUnless { it == SourceFormat.UNKNOWN } ?: source.format
         val result = when { failed || category != PlaybackFailureCategory.NONE -> "Falha"; stage == "concluído" -> "Concluído"; status in setOf(200, 206) -> "Conectado"; else -> "Pendente" }
-        return PlaybackDiagnostic(source.providerName ?: "Não informado", source.quality ?: "Não informada", source.format, effectiveFormat, network.initialStatus ?: statusOverride, finalStatus, network.initialProtocol, network.finalProtocol, network.redirectCount, category, stage, network.redirected, network.crossHostRedirect, network.downgradedToHttp, network.redirectCompleted, network.experimentalHttpEnabled, network.sensitiveHeadersWithheld, network.redirectFailure, network.stopReason, network.hops, network.finalContentType, HeaderPresence.from(source.headers), result)
+        return PlaybackDiagnostic(source.providerName ?: "Não informado", source.quality ?: "Não informada", source.format, effectiveFormat, network.initialStatus ?: statusOverride, finalStatus, network.initialProtocol, network.finalProtocol, network.requestStage, network.redirectCount, category, stage, network.redirected, network.crossHostRedirect, network.downgradedToHttp, network.redirectCompleted, network.experimentalHttpEnabled, network.sensitiveHeadersWithheld, network.redirectFailure, network.stopReason, network.hops, network.finalContentType, HeaderPresence.from(source.headers), result)
     }
 
     fun userMessage(diagnostic: PlaybackDiagnostic): String {
+        if (diagnostic.requestStage == PlaybackRequestStage.SEEK && diagnostic.status == 416) return "O servidor rejeitou o intervalo solicitado durante o seek"
         if (diagnostic.sensitiveHeadersWithheld && diagnostic.status in setOf(401, 403)) return "A reprodução exige credenciais que não podem ser transmitidas com segurança após o redirecionamento"
         if (diagnostic.stopReason == PlaybackStopReason.REDIRECT_BLOCKED) {
             return when (diagnostic.redirectFailure) {

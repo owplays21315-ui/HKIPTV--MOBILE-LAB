@@ -90,7 +90,7 @@ fun PlayerScreen(source: MediaSource?, content: CatalogItem?, experimentalHttpPl
                         details.hops.forEach { hop ->
                             Log.e("HKPlayerHop", "hop=" + hop.number + "; status=" + hop.status + "; protocol=" + hop.protocol + "; hostChanged=" + hop.hostChanged + "; location=" + hop.locationPresent + "; stop=" + (hop.stopReason?.name ?: "none"))
                         }
-                        Log.e("HKPlayer", "provider=" + details.provider + "; stage=" + details.stage + "; format=" + details.format + "; initialStatus=" + (details.initialStatus ?: "n/a") + "; finalStatus=" + (details.finalStatus ?: "n/a") + "; redirects=" + details.redirectCount + "; hostChanged=" + details.crossHostRedirect + "; completed=" + details.redirectCompleted + "; category=" + details.category)
+                        Log.e("HKPlayer", "provider=" + details.provider + "; stage=" + details.stage + "; requestStage=" + details.requestStage + "; format=" + details.format + "; initialStatus=" + (details.initialStatus ?: "n/a") + "; finalStatus=" + (details.finalStatus ?: "n/a") + "; redirects=" + details.redirectCount + "; hostChanged=" + details.crossHostRedirect + "; completed=" + details.redirectCompleted + "; category=" + details.category)
                     }
                     override fun onPlaybackStateChanged(state: Int) {
                         visualState = PlayerUiLogic.visualState(state, isPlaying, error != null)

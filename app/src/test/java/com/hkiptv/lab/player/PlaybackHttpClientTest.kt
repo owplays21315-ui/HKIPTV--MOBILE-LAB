@@ -71,6 +71,80 @@ class PlaybackHttpClientTest {
         val first = server.takeRequest(); val second = server.takeRequest(); assertEquals("GET", first.method); assertEquals("GET", second.method); assertEquals("bytes=100-", second.getHeader("Range")); assertRedirect(observer.snapshot(), 307, 206, 1, true)
     }
 
+    @Test fun openingAndTenSecondSeekMayRepeatTheSameRedirectChain() {
+        val start = server.url("/start.mp4")
+        val final = server.url("/final.mp4")
+        server.enqueue(redirect(final.toString()))
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "video/mp4").setBody("initial"))
+        server.enqueue(redirect(final.toString()))
+        server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Type", "video/mp4").setBody("seek"))
+        val observer = PlaybackNetworkObserver()
+        val client = PlaybackHttpClient.create(source(start.toString(), SourceFormat.MP4), observer, testPolicy())
+        client.newCall(Request.Builder().url(start).get().build()).execute().use { assertEquals(200, it.code) }
+        client.newCall(Request.Builder().url(start).header("Range", "bytes=10000-").get().build()).execute().use { assertEquals(206, it.code) }
+        val requests = List(4) { server.takeRequest() }
+        assertEquals("bytes=10000-", requests[2].getHeader("Range"))
+        assertEquals("bytes=10000-", requests[3].getHeader("Range"))
+        assertEquals(PlaybackRequestStage.SEEK, observer.snapshot().requestStage)
+        assertNull(observer.snapshot().redirectFailure)
+    }
+
+    @Test fun seeksAtHalfAndNearEndRemainIndependent() {
+        val start = server.url("/start.mp4")
+        val final = server.url("/final.mp4")
+        repeat(3) {
+            server.enqueue(redirect(final.toString(), if (it % 2 == 0) 307 else 302))
+            server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Type", "video/mp4").setBody("partial"))
+        }
+        val observer = PlaybackNetworkObserver()
+        val client = PlaybackHttpClient.create(source(start.toString(), SourceFormat.MP4), observer, testPolicy())
+        listOf("bytes=500000-", "bytes=950000-", "bytes=500000-").forEach { range ->
+            client.newCall(Request.Builder().url(start).header("Range", range).get().build()).execute().use { assertEquals(206, it.code) }
+        }
+        assertEquals(1, observer.snapshot().redirectCount)
+        assertEquals(2, observer.snapshot().hops.size)
+        assertNull(observer.snapshot().redirectFailure)
+    }
+
+    @Test fun rangeRequestAcceptsServerFallbackHttp200() {
+        val start = server.url("/movie.mp4")
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "video/mp4").setBody("full response"))
+        val observer = PlaybackNetworkObserver()
+        val client = PlaybackHttpClient.create(source(start.toString(), SourceFormat.MP4), observer, testPolicy())
+        client.newCall(Request.Builder().url(start).header("Range", "bytes=50000-").get().build()).execute().use { assertEquals(200, it.code) }
+        assertEquals(PlaybackRequestStage.SEEK, observer.snapshot().requestStage)
+        assertEquals(200, observer.snapshot().finalStatus)
+    }
+
+    @Test fun invalidRangeIsDiagnosedAsSeekFailure() {
+        val start = server.url("/movie.mp4")
+        server.enqueue(MockResponse().setResponseCode(416))
+        val media = source(start.toString(), SourceFormat.MP4)
+        val observer = PlaybackNetworkObserver()
+        val client = PlaybackHttpClient.create(media, observer, testPolicy())
+        client.newCall(Request.Builder().url(start).header("Range", "bytes=9999999-").get().build()).execute().use { assertEquals(416, it.code) }
+        val diagnostic = PlaybackDiagnostics.snapshot(media, observer.snapshot(), "seek", failed = true)
+        assertEquals(PlaybackRequestStage.SEEK, diagnostic.requestStage)
+        assertTrue(PlaybackDiagnostics.userMessage(diagnostic).contains("intervalo solicitado"))
+    }
+
+    @Test fun httpsToHttpRedirectDuringSeekPreservesRangeAndSignedUrl() {
+        val tls = tlsSetup()
+        val secure = MockWebServer().apply { useHttps(tls.server.sslSocketFactory(), false); start() }
+        try {
+            val signed = server.url("/final.mp4").newBuilder().encodedQuery("signature=a%2Bb%3D&expires=123").build()
+            secure.enqueue(redirect(signed.toString()))
+            server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Type", "video/mp4").setBody("partial"))
+            val media = source(secure.url("/start.mp4").toString(), SourceFormat.MP4)
+            val observer = PlaybackNetworkObserver()
+            val client = PlaybackHttpClient.create(media, observer, testPolicy(), tls.configure)
+            client.newCall(Request.Builder().url(secure.url("/start.mp4")).header("Range", "bytes=750000-").get().build()).execute().use { assertEquals(206, it.code) }
+            val redirected = server.takeRequest()
+            assertEquals("/final.mp4?signature=a%2Bb%3D&expires=123", redirected.path)
+            assertEquals("bytes=750000-", redirected.getHeader("Range"))
+        } finally { secure.shutdown() }
+    }
+
     @Test fun allStandardRedirectCodesFollowGetRequests() {
         listOf(301, 302, 303, 307, 308).forEach { code ->
             server.enqueue(redirect(server.url("/final-$code.mp4").toString(), code)); server.enqueue(MockResponse().setResponseCode(200).setBody("ok"))

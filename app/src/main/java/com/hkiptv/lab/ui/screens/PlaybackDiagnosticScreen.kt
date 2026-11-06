@@ -20,6 +20,7 @@ import com.hkiptv.lab.player.PlaybackDiagnostic
         DiagnosticRow("MIME final", diagnostic.finalContentType ?: "Não recebido")
         DiagnosticRow("Protocolo inicial", diagnostic.initialProtocol?.uppercase() ?: "Não recebido")
         DiagnosticRow("Protocolo final", diagnostic.finalProtocol?.uppercase() ?: "Não recebido")
+        DiagnosticRow("Etapa HTTP", if (diagnostic.requestStage == com.hkiptv.lab.player.PlaybackRequestStage.SEEK) "Seek" else "Abertura inicial")
         DiagnosticRow("Status HTTP inicial", diagnostic.initialStatus?.toString() ?: "Não recebido")
         DiagnosticRow("Status HTTP final", diagnostic.finalStatus?.toString() ?: "Não recebido")
         DiagnosticRow("Categoria", diagnostic.category.label)
