@@ -4,9 +4,10 @@ import com.hkiptv.lab.data.model.MediaSource
 import com.hkiptv.lab.data.model.SourceFormat
 import com.hkiptv.lab.data.model.SourceFormatDetector
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
 
 enum class PlaybackFailureCategory(val label: String) {
-    AUTHENTICATION("Autenticação necessária"), ACCESS_DENIED("Acesso negado"), NOT_FOUND("Mídia não encontrada"), RATE_LIMIT("Limite de requisições"), SERVER("Falha no servidor"), CONNECTION("Falha de conexão"), HTTP("Resposta HTTP inválida"), REDIRECT("Falha de redirecionamento"), NONE("Sem falha")
+    AUTHENTICATION("Autenticação necessária"), ACCESS_DENIED("Acesso negado"), NOT_FOUND("Mídia não encontrada"), RATE_LIMIT("Limite de requisições"), SERVER("Falha no servidor"), CONNECTION("Falha de conexão"), HTTP("Resposta HTTP inválida"), REDIRECT("Falha de redirecionamento"), FORMAT("Formato de mídia incompatível"), DECODING("Falha de decodificação"), NONE("Sem falha")
 }
 
 data class HeaderPresence(val total: Int, val authorization: Boolean, val cookie: Boolean, val referer: Boolean, val origin: Boolean, val userAgent: Boolean) {
@@ -46,16 +47,19 @@ object PlaybackDiagnostics {
         else -> PlaybackFailureCategory.NONE
     }
 
-    fun snapshot(source: MediaSource, network: PlaybackNetworkSnapshot, stage: String, statusOverride: Int? = null, failed: Boolean = false): PlaybackDiagnostic {
+    fun snapshot(source: MediaSource, network: PlaybackNetworkSnapshot, stage: String, statusOverride: Int? = null, failed: Boolean = false, playbackErrorCode: Int? = null): PlaybackDiagnostic {
         val finalStatus = network.finalStatus ?: statusOverride
         val status = finalStatus ?: network.initialStatus
-        val category = when { network.redirectFailure != null -> PlaybackFailureCategory.REDIRECT; status == null && !network.connectionFailed && !failed -> PlaybackFailureCategory.NONE; else -> category(status) }
+        val category = when { network.redirectFailure != null -> PlaybackFailureCategory.REDIRECT; playbackErrorCode in formatErrorCodes -> PlaybackFailureCategory.FORMAT; playbackErrorCode in decodingErrorCodes -> PlaybackFailureCategory.DECODING; status == null && !network.connectionFailed && !failed -> PlaybackFailureCategory.NONE; else -> category(status) }
         val detectedFinal = SourceFormatDetector.detect("", network.finalContentType)
         val effectiveFormat = detectedFinal.takeUnless { it == SourceFormat.UNKNOWN } ?: source.format
         return PlaybackDiagnostic(source.providerName ?: "Não informado", source.quality ?: "Não informada", source.format, effectiveFormat, network.initialStatus ?: statusOverride, finalStatus, network.redirectCount, category, stage, network.redirected, network.crossHostRedirect, network.redirectCompleted, network.redirectFailure, network.finalContentType, HeaderPresence.from(source.headers))
     }
 
-    fun userMessage(diagnostic: PlaybackDiagnostic): String = when (diagnostic.status) {
+    fun userMessage(diagnostic: PlaybackDiagnostic): String {
+        if (diagnostic.category == PlaybackFailureCategory.FORMAT) return "Formato de mídia incompatível ou resposta inesperada"
+        if (diagnostic.category == PlaybackFailureCategory.DECODING) return "Falha ao decodificar a mídia"
+        return when (diagnostic.status) {
         401 -> "HTTP 401 — autenticação necessária"
         403 -> "HTTP 403 — acesso negado pelo servidor da mídia"
         404 -> "HTTP 404 — mídia não encontrada"
@@ -66,10 +70,15 @@ object PlaybackDiagnostics {
             RedirectFailure.INSECURE_PROTOCOL -> "Redirecionamento bloqueado para protocolo inseguro"
             RedirectFailure.PRIVATE_ADDRESS -> "Redirecionamento bloqueado para endereço privado"
             RedirectFailure.MISSING_LOCATION -> "HTTP ${diagnostic.status} — redirecionamento sem destino válido"
+            RedirectFailure.INVALID_LOCATION -> "HTTP ${diagnostic.status} — endereço de redirecionamento inválido"
             RedirectFailure.TOO_MANY_REDIRECTS -> "Loop ou excesso de redirecionamentos"
             null -> "HTTP ${diagnostic.status} — ${diagnostic.category.label}"
         }
     }
+    }
+
+    private val formatErrorCodes = setOf(PlaybackException.ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE, PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED, PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED, PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED, PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED)
+    private val decodingErrorCodes = setOf(PlaybackException.ERROR_CODE_DECODER_INIT_FAILED, PlaybackException.ERROR_CODE_DECODING_FAILED, PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES, PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED)
 }
 
 object PlaybackMimeType {

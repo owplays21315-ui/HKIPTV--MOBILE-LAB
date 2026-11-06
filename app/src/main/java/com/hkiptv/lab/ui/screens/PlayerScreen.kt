@@ -46,7 +46,7 @@ import com.hkiptv.lab.player.*
                     override fun onPlayerError(playbackError: PlaybackException) {
                         val status = playbackError.findInvalidResponse()?.responseCode
                         val currentStage = if (currentPosition <= 0) "abertura" else "reprodução"
-                        val details = PlaybackDiagnostics.snapshot(selected, observer.snapshot(), currentStage, status, failed = true)
+                        val details = PlaybackDiagnostics.snapshot(selected, observer.snapshot(), currentStage, status, failed = true, playbackErrorCode = playbackError.errorCode)
                         diagnostic = details; error = PlaybackDiagnostics.userMessage(details)
                         Log.e("HKPlayer", "provider=${details.provider}; stage=${details.stage}; format=${details.format}; initialStatus=${details.initialStatus ?: "n/a"}; finalStatus=${details.finalStatus ?: "n/a"}; redirects=${details.redirectCount}; hostChanged=${details.crossHostRedirect}; completed=${details.redirectCompleted}; category=${details.category}")
                     }

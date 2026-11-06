@@ -15,7 +15,7 @@ data class PlaybackNetworkSnapshot(
     val connectionFailed: Boolean = false, val redirectFailure: RedirectFailure? = null, val finalContentType: String? = null
 ) { val status: Int? get() = finalStatus ?: initialStatus }
 
-enum class RedirectFailure { INSECURE_PROTOCOL, PRIVATE_ADDRESS, MISSING_LOCATION, TOO_MANY_REDIRECTS }
+enum class RedirectFailure { INSECURE_PROTOCOL, PRIVATE_ADDRESS, MISSING_LOCATION, INVALID_LOCATION, TOO_MANY_REDIRECTS }
 data class PlaybackRedirectPolicy(val allowHttpForTests: Boolean = false, val allowPrivateForTests: Boolean = false, val maxRedirects: Int = 20)
 class UnsafePlaybackRedirectException(val reason: RedirectFailure) : IOException("Redirecionamento bloqueado: $reason")
 
@@ -58,7 +58,7 @@ object PlaybackHttpClient {
         val location = response.header("Location")
         if (location.isNullOrBlank()) { observer.redirectFailure(RedirectFailure.MISSING_LOCATION, response.code); return }
         val target = response.request.url.resolve(location)
-        if (target == null) { observer.redirectFailure(RedirectFailure.MISSING_LOCATION, response.code); throw UnsafePlaybackRedirectException(RedirectFailure.MISSING_LOCATION) }
+        if (target == null) { observer.redirectFailure(RedirectFailure.INVALID_LOCATION, response.code); throw UnsafePlaybackRedirectException(RedirectFailure.INVALID_LOCATION) }
         if (target.scheme != "https" && !policy.allowHttpForTests) { observer.redirectFailure(RedirectFailure.INSECURE_PROTOCOL, response.code); throw UnsafePlaybackRedirectException(RedirectFailure.INSECURE_PROTOCOL) }
         if (!policy.allowPrivateForTests && target.host.isLiteralPrivateAddress()) { observer.redirectFailure(RedirectFailure.PRIVATE_ADDRESS, response.code); throw UnsafePlaybackRedirectException(RedirectFailure.PRIVATE_ADDRESS) }
         observer.redirect(!target.host.equals(response.request.url.host, true))
