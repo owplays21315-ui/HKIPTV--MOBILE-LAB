@@ -24,15 +24,21 @@ data class PlaybackDiagnostic(
     val effectiveFormat: SourceFormat,
     val initialStatus: Int?,
     val finalStatus: Int?,
+    val initialProtocol: String?,
+    val finalProtocol: String?,
     val redirectCount: Int,
     val category: PlaybackFailureCategory,
     val stage: String,
     val redirected: Boolean,
     val crossHostRedirect: Boolean,
+    val downgradedToHttp: Boolean,
     val redirectCompleted: Boolean,
+    val experimentalHttpEnabled: Boolean,
+    val sensitiveHeadersWithheld: Boolean,
     val redirectFailure: RedirectFailure?,
     val finalContentType: String?,
-    val headers: HeaderPresence
+    val headers: HeaderPresence,
+    val result: String
 ) { val status: Int? get() = finalStatus ?: initialStatus }
 
 object PlaybackDiagnostics {
@@ -53,10 +59,12 @@ object PlaybackDiagnostics {
         val category = when { network.redirectFailure != null -> PlaybackFailureCategory.REDIRECT; playbackErrorCode in formatErrorCodes -> PlaybackFailureCategory.FORMAT; playbackErrorCode in decodingErrorCodes -> PlaybackFailureCategory.DECODING; status == null && !network.connectionFailed && !failed -> PlaybackFailureCategory.NONE; else -> category(status) }
         val detectedFinal = SourceFormatDetector.detect("", network.finalContentType)
         val effectiveFormat = detectedFinal.takeUnless { it == SourceFormat.UNKNOWN } ?: source.format
-        return PlaybackDiagnostic(source.providerName ?: "Não informado", source.quality ?: "Não informada", source.format, effectiveFormat, network.initialStatus ?: statusOverride, finalStatus, network.redirectCount, category, stage, network.redirected, network.crossHostRedirect, network.redirectCompleted, network.redirectFailure, network.finalContentType, HeaderPresence.from(source.headers))
+        val result = when { failed || category != PlaybackFailureCategory.NONE -> "Falha"; stage == "concluído" -> "Concluído"; status in setOf(200, 206) -> "Conectado"; else -> "Pendente" }
+        return PlaybackDiagnostic(source.providerName ?: "Não informado", source.quality ?: "Não informada", source.format, effectiveFormat, network.initialStatus ?: statusOverride, finalStatus, network.initialProtocol, network.finalProtocol, network.redirectCount, category, stage, network.redirected, network.crossHostRedirect, network.downgradedToHttp, network.redirectCompleted, network.experimentalHttpEnabled, network.sensitiveHeadersWithheld, network.redirectFailure, network.finalContentType, HeaderPresence.from(source.headers), result)
     }
 
     fun userMessage(diagnostic: PlaybackDiagnostic): String {
+        if (diagnostic.sensitiveHeadersWithheld && diagnostic.status in setOf(401, 403)) return "A reprodução exige credenciais que não podem ser transmitidas com segurança após o redirecionamento"
         if (diagnostic.category == PlaybackFailureCategory.FORMAT) return "Formato de mídia incompatível ou resposta inesperada"
         if (diagnostic.category == PlaybackFailureCategory.DECODING) return "Falha ao decodificar a mídia"
         return when (diagnostic.status) {
@@ -67,8 +75,10 @@ object PlaybackDiagnostics {
         in 500..599 -> "HTTP ${diagnostic.status} — falha no servidor da mídia"
         null -> "Falha de conexão durante ${diagnostic.stage}"
         else -> when (diagnostic.redirectFailure) {
-            RedirectFailure.INSECURE_PROTOCOL -> "Redirecionamento bloqueado para protocolo inseguro"
+            RedirectFailure.CLEARTEXT_DISABLED -> "Destino HTTP bloqueado: ative o modo HTTP experimental nos Ajustes"
             RedirectFailure.PRIVATE_ADDRESS -> "Redirecionamento bloqueado para endereço privado"
+            RedirectFailure.UNSUPPORTED_SCHEME -> "Protocolo de mídia não suportado"
+            RedirectFailure.DNS_REBINDING -> "Destino bloqueado por mudança insegura de DNS"
             RedirectFailure.MISSING_LOCATION -> "HTTP ${diagnostic.status} — redirecionamento sem destino válido"
             RedirectFailure.INVALID_LOCATION -> "HTTP ${diagnostic.status} — endereço de redirecionamento inválido"
             RedirectFailure.TOO_MANY_REDIRECTS -> "Loop ou excesso de redirecionamentos"

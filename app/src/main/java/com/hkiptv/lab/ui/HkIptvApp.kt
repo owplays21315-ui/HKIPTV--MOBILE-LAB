@@ -15,7 +15,7 @@ private data class Destination(val route: String, val label: String, val icon: a
 private val destinations = listOf(Destination("home", "Início", Icons.Default.Home), Destination("search", "Busca", Icons.Default.Search), Destination("providers", "Provedores", Icons.Default.Dns), Destination("settings", "Ajustes", Icons.Default.Settings))
 
 @Composable fun HkIptvApp(application: HkIptvApplication) {
-    val vm: AppViewModel = viewModel(factory = AppViewModel.factory(application.providerRepository, application.httpClient))
+    val vm: AppViewModel = viewModel(factory = AppViewModel.factory(application.providerRepository, application.httpClient, application.labSettings))
     val state by vm.state.collectAsState()
     val nav = rememberNavController()
     val current by nav.currentBackStackEntryAsState()
@@ -27,11 +27,11 @@ private val destinations = listOf(Destination("home", "Início", Icons.Default.H
             composable("home") { HomeScreen(state, vm::loadCatalog) { vm.select(it); nav.navigate("details") } }
             composable("search") { SearchScreen(state, vm::search) { vm.select(it); nav.navigate("details") } }
             composable("providers") { ProvidersScreen(state, vm::addProvider, vm::editProvider, vm::enableProvider, vm::makePrimary, vm::removeProvider) }
-            composable("settings") { SettingsScreen() }
+            composable("settings") { SettingsScreen(state.experimentalHttpPlayback, vm::setExperimentalHttpPlayback) }
             composable("details") { DetailsScreen(state.selected, onBack = { nav.popBackStack() }, onSources = { item -> vm.loadSources(item); nav.navigate("sources") }, onSeasons = { nav.navigate("seasons") }) }
             composable("seasons") { SeasonsScreen(state.selected) { nav.popBackStack() } }
             composable("sources") { SourcesScreen(state.sources, state.loading, onBack = { nav.popBackStack() }) { source -> vm.selectSource(source); nav.navigate("player") } }
-            composable("player") { PlayerScreen(state.selectedSource) { nav.popBackStack() } }
+            composable("player") { PlayerScreen(state.selectedSource, state.experimentalHttpPlayback) { nav.popBackStack() } }
         }
     }
 }

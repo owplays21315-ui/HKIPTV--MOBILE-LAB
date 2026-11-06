@@ -4,17 +4,18 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.hkiptv.lab.data.model.*
+import com.hkiptv.lab.data.local.LabSettingsStorage
 import com.hkiptv.lab.data.remote.ProviderHttpClient
 import com.hkiptv.lab.data.repository.ProviderRepository
 import com.hkiptv.lab.data.repository.ProviderRouting
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
-data class AppUiState(val providers: List<StoredProvider> = emptyList(), val items: List<MediaItem> = emptyList(), val selected: MediaItem? = null, val sources: List<MediaSource> = emptyList(), val selectedSource: MediaSource? = null, val loading: Boolean = false, val error: String? = null)
+data class AppUiState(val providers: List<StoredProvider> = emptyList(), val items: List<MediaItem> = emptyList(), val selected: MediaItem? = null, val sources: List<MediaSource> = emptyList(), val selectedSource: MediaSource? = null, val experimentalHttpPlayback: Boolean = false, val loading: Boolean = false, val error: String? = null)
 
-class AppViewModel(private val repository: ProviderRepository, private val http: ProviderHttpClient) : ViewModel() {
+class AppViewModel(private val repository: ProviderRepository, private val http: ProviderHttpClient, private val settings: LabSettingsStorage) : ViewModel() {
     private val mutable = MutableStateFlow(AppUiState())
-    val state = combine(mutable, repository.providers) { ui, providers -> ui.copy(providers = providers) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
+    val state = combine(mutable, repository.providers, settings.experimentalHttpPlayback) { ui, providers, experimentalHttp -> ui.copy(providers = providers, experimentalHttpPlayback = experimentalHttp) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppUiState())
     init { viewModelScope.launch { repository.refreshManifests() } }
     fun addProvider(url: String) = task { repository.add(url) }
     fun editProvider(old: String, new: String) = task { repository.edit(old, new) }
@@ -44,6 +45,7 @@ class AppViewModel(private val repository: ProviderRepository, private val http:
     }
     fun selectSource(source: MediaSource) { mutable.update { it.copy(selectedSource = source) } }
     fun clearError() { mutable.update { it.copy(error = null) } }
+    fun setExperimentalHttpPlayback(enabled: Boolean) = viewModelScope.launch { settings.setExperimentalHttpPlayback(enabled) }
     private fun primary() = state.value.providers.firstOrNull { it.primary && it.enabled }
     private fun task(block: suspend () -> Unit) = viewModelScope.launch {
         mutable.update { it.copy(loading = true, error = null) }
@@ -51,8 +53,8 @@ class AppViewModel(private val repository: ProviderRepository, private val http:
         mutable.update { it.copy(loading = false) }
     }
     companion object {
-        fun factory(repository: ProviderRepository, http: ProviderHttpClient) = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST") override fun <T : ViewModel> create(modelClass: Class<T>): T = AppViewModel(repository, http) as T
+        fun factory(repository: ProviderRepository, http: ProviderHttpClient, settings: LabSettingsStorage) = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST") override fun <T : ViewModel> create(modelClass: Class<T>): T = AppViewModel(repository, http, settings) as T
         }
     }
 }

@@ -2,6 +2,7 @@ package com.hkiptv.lab.player
 
 import com.hkiptv.lab.data.model.*
 import okhttp3.OkHttpClient
+import okhttp3.Dns
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -10,6 +11,7 @@ import okhttp3.tls.HeldCertificate
 import org.junit.*
 import org.junit.Assert.*
 import java.io.IOException
+import java.net.InetAddress
 
 class PlaybackHttpClientTest {
     private lateinit var server: MockWebServer
@@ -18,6 +20,44 @@ class PlaybackHttpClientTest {
 
     @Test fun mp4DirectHttp200() { assertSuccessful("/video.mp4", SourceFormat.MP4, fixture("sample-mp4.txt"), "video/mp4") }
     @Test fun hlsHttp200WithoutRegression() { assertSuccessful("/master.m3u8", SourceFormat.HLS, fixture("sample.m3u8"), "application/vnd.apple.mpegurl") }
+
+    @Test fun directHttpIsBlockedWhenExperimentalModeIsOff() {
+        val observer = PlaybackNetworkObserver()
+        assertFails { execute(source(server.url("/video.mp4").toString()), observer, PlaybackRedirectPolicy(allowPrivateForTests = true)) }
+        assertEquals(RedirectFailure.CLEARTEXT_DISABLED, observer.snapshot().redirectFailure)
+        assertFalse(observer.snapshot().experimentalHttpEnabled)
+    }
+
+    @Test fun directHttpIsAllowedWhenExperimentalModeIsOn() {
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "video/mp4").setBody("ok"))
+        val observer = PlaybackNetworkObserver(); execute(source(server.url("/video.mp4").toString(), SourceFormat.MP4), observer, testPolicy())
+        assertEquals("http", observer.snapshot().initialProtocol); assertEquals("http", observer.snapshot().finalProtocol); assertTrue(observer.snapshot().experimentalHttpEnabled)
+    }
+
+    @Test fun httpsToHttpDowngradeEndsIn200() { assertHttpsToHttp(200) }
+    @Test fun httpsToHttpDowngradeEndsIn206() { assertHttpsToHttp(206) }
+
+    @Test fun httpsToHttpDowngradeIsBlockedWhenModeIsOff() {
+        val tls = tlsSetup(); val secure = MockWebServer().apply { useHttps(tls.server.sslSocketFactory(), false); start() }
+        try {
+            secure.enqueue(redirect(server.url("/plain.mp4").toString()))
+            val observer = PlaybackNetworkObserver(); assertFails { execute(source(secure.url("/start.mp4").toString()), observer, PlaybackRedirectPolicy(allowPrivateForTests = true), configure = tls.configure) }
+            assertEquals(RedirectFailure.CLEARTEXT_DISABLED, observer.snapshot().redirectFailure)
+        } finally { secure.shutdown() }
+    }
+
+    @Test fun sensitiveHeadersAreRemovedOnHttpsToHttpDowngrade() {
+        val tls = tlsSetup(); val secure = MockWebServer().apply { useHttps(tls.server.sslSocketFactory(), false); start() }
+        try {
+            secure.enqueue(redirect(server.url("/plain.mp4").toString())); server.enqueue(MockResponse().setResponseCode(401))
+            val media = source(secure.url("/start.mp4").toString(), headers = mapOf("Authorization" to "synthetic", "Cookie" to "synthetic", "X-Api-Key" to "synthetic"))
+            val observer = PlaybackNetworkObserver(); execute(media, observer, testPolicy(), configure = tls.configure)
+            val initial = secure.takeRequest(); val final = server.takeRequest()
+            assertNotNull(initial.getHeader("Authorization")); assertNull(final.getHeader("Authorization")); assertNull(final.getHeader("Cookie")); assertNull(final.getHeader("X-Api-Key"))
+            val diagnostic = PlaybackDiagnostics.snapshot(media, observer.snapshot(), "abertura", failed = true)
+            assertTrue(diagnostic.sensitiveHeadersWithheld); assertTrue(PlaybackDiagnostics.userMessage(diagnostic).contains("credenciais"))
+        } finally { secure.shutdown() }
+    }
 
     @Test fun mp4Http307Then200() {
         server.enqueue(redirect(server.url("/final.mp4").toString())); server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "video/mp4").setBody("mp4"))
@@ -56,7 +96,7 @@ class PlaybackHttpClientTest {
         val tls = tlsSetup(); val secure = MockWebServer(); secure.useHttps(tls.server.sslSocketFactory(), false); secure.start()
         try {
             server.enqueue(redirect(secure.url("/secure.mp4").toString())); secure.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "video/mp4").setBody("ok"))
-            val observer = PlaybackNetworkObserver(); execute(source(server.url("/start.mp4").toString(), SourceFormat.MP4), observer, PlaybackRedirectPolicy(allowPrivateForTests = true), configure = tls.configure); assertRedirect(observer.snapshot(), 307, 200, 1, true)
+            val observer = PlaybackNetworkObserver(); execute(source(server.url("/start.mp4").toString(), SourceFormat.MP4), observer, PlaybackRedirectPolicy(experimentalHttpEnabled = true, allowPrivateForTests = true), configure = tls.configure); assertRedirect(observer.snapshot(), 307, 200, 1, true)
         } finally { secure.shutdown() }
     }
 
@@ -89,12 +129,42 @@ class PlaybackHttpClientTest {
 
     @Test fun insecureHttpRedirectIsBlocked() {
         server.enqueue(redirect("http://example.invalid/media.mp4")); val observer = PlaybackNetworkObserver(); assertFails { execute(source(server.url("/start").toString()), observer) }
-        assertEquals(RedirectFailure.INSECURE_PROTOCOL, observer.snapshot().redirectFailure)
+        assertEquals(RedirectFailure.CLEARTEXT_DISABLED, observer.snapshot().redirectFailure)
     }
 
     @Test fun privateAddressRedirectIsBlocked() {
-        server.enqueue(redirect("https://127.0.0.1/private.mp4")); val observer = PlaybackNetworkObserver(); assertFails { execute(source(server.url("/start").toString()), observer) }
+        server.enqueue(redirect("https://10.0.0.1/private.mp4")); val observer = PlaybackNetworkObserver(); assertFails { execute(source(server.url("/start").toString()), observer, PlaybackRedirectPolicy(experimentalHttpEnabled = true, privateHostsAllowedForTests = setOf("localhost"))) }
         assertEquals(RedirectFailure.PRIVATE_ADDRESS, observer.snapshot().redirectFailure)
+    }
+
+    @Test fun loopbackRedirectIsBlocked() {
+        server.enqueue(redirect("https://127.0.0.1/private.mp4")); val observer = PlaybackNetworkObserver()
+        assertFails { execute(source(server.url("/start").toString()), observer, PlaybackRedirectPolicy(experimentalHttpEnabled = true, privateHostsAllowedForTests = setOf("localhost"))) }
+        assertEquals(RedirectFailure.PRIVATE_ADDRESS, observer.snapshot().redirectFailure)
+    }
+
+    @Test fun dnsRebindingIsBlockedBetweenValidationAndConnection() {
+        val tls = tlsSetup()
+        val rebindingDns = object : Dns {
+            var mediaLookups = 0
+            override fun lookup(hostname: String): List<InetAddress> = if (hostname == "media.test") {
+                mediaLookups++
+                listOf(InetAddress.getByName(if (mediaLookups == 1) "93.184.216.34" else "127.0.0.1"))
+            } else Dns.SYSTEM.lookup(hostname)
+        }
+        server.enqueue(redirect("https://media.test:443/final.mp4"))
+        val observer = PlaybackNetworkObserver()
+        assertFails { execute(source(server.url("/start").toString()), observer, PlaybackRedirectPolicy(experimentalHttpEnabled = true, privateHostsAllowedForTests = setOf("localhost"), dns = rebindingDns), configure = tls.configure) }
+        assertEquals(RedirectFailure.DNS_REBINDING, observer.snapshot().redirectFailure)
+    }
+
+    @Test fun directHttpsStillWorks() {
+        val tls = tlsSetup(); val secure = MockWebServer().apply { useHttps(tls.server.sslSocketFactory(), false); start() }
+        try {
+            secure.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "video/mp4").setBody("ok"))
+            val observer = PlaybackNetworkObserver(); execute(source(secure.url("/video.mp4").toString()), observer, PlaybackRedirectPolicy(allowPrivateForTests = true), configure = tls.configure)
+            assertEquals(200, observer.snapshot().finalStatus); assertEquals("https", observer.snapshot().finalProtocol)
+        } finally { secure.shutdown() }
     }
 
     @Test fun signedRedirectUrlIsPreserved() {
@@ -117,15 +187,25 @@ class PlaybackHttpClientTest {
     }
 
     @Test fun connectionFailureHasNoStatus() {
-        val url = server.url("/offline").toString(); server.shutdown(); val observer = PlaybackNetworkObserver(); assertFails { execute(source(url), observer) }
+        val url = server.url("/offline").toString(); server.shutdown(); val observer = PlaybackNetworkObserver(); assertFails { execute(source(url), observer, testPolicy()) }
         val diagnostic = PlaybackDiagnostics.snapshot(source(url), observer.snapshot(), "abertura", failed = true); assertEquals(PlaybackFailureCategory.CONNECTION, diagnostic.category); assertNull(diagnostic.status)
     }
 
-    private fun assertSuccessful(path: String, format: SourceFormat, body: String, contentType: String) { server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", contentType).setBody(body)); val observer = PlaybackNetworkObserver(); execute(source(server.url(path).toString(), format), observer); assertEquals(200, observer.snapshot().finalStatus) }
+    private fun assertSuccessful(path: String, format: SourceFormat, body: String, contentType: String) { server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", contentType).setBody(body)); val observer = PlaybackNetworkObserver(); execute(source(server.url(path).toString(), format), observer, testPolicy()); assertEquals(200, observer.snapshot().finalStatus) }
     private fun assertStatusAfterRedirect(code: Int, category: PlaybackFailureCategory) { server.enqueue(redirect(server.url("/final").toString())); server.enqueue(MockResponse().setResponseCode(code)); val observer = PlaybackNetworkObserver(); execute(source(server.url("/start").toString()), observer, testPolicy()); val snapshot = observer.snapshot(); assertEquals(307, snapshot.initialStatus); assertEquals(code, snapshot.finalStatus); assertEquals(category, PlaybackDiagnostics.category(code)) }
+    private fun assertHttpsToHttp(finalCode: Int) {
+        val tls = tlsSetup(); val secure = MockWebServer().apply { useHttps(tls.server.sslSocketFactory(), false); start() }
+        try {
+            secure.enqueue(redirect(server.url("/plain.mp4?signature=synthetic%2Bvalue").toString()))
+            server.enqueue(MockResponse().setResponseCode(finalCode).setHeader("Content-Type", "video/mp4").setBody("ok"))
+            val observer = PlaybackNetworkObserver(); execute(source(secure.url("/start.mp4").toString(), SourceFormat.MP4), observer, testPolicy(), configure = tls.configure)
+            val value = observer.snapshot(); assertEquals("https", value.initialProtocol); assertEquals("http", value.finalProtocol); assertTrue(value.downgradedToHttp); assertEquals(finalCode, value.finalStatus); assertTrue(value.redirectCompleted)
+            assertEquals("/plain.mp4?signature=synthetic%2Bvalue", server.takeRequest().path)
+        } finally { secure.shutdown() }
+    }
     private fun assertRedirect(value: PlaybackNetworkSnapshot, initial: Int, final: Int, count: Int, completed: Boolean) { assertEquals(initial, value.initialStatus); assertEquals(final, value.finalStatus); assertEquals(count, value.redirectCount); assertEquals(completed, value.redirectCompleted) }
     private fun redirect(location: String, code: Int = 307) = MockResponse().setResponseCode(code).setHeader("Location", location)
-    private fun testPolicy(maxRedirects: Int = 20) = PlaybackRedirectPolicy(allowHttpForTests = true, allowPrivateForTests = true, maxRedirects = maxRedirects)
+    private fun testPolicy(maxRedirects: Int = 20) = PlaybackRedirectPolicy(experimentalHttpEnabled = true, allowPrivateForTests = true, maxRedirects = maxRedirects)
     private fun execute(source: MediaSource, observer: PlaybackNetworkObserver, policy: PlaybackRedirectPolicy = PlaybackRedirectPolicy(), request: Request = Request.Builder().url(source.url).get().build(), configure: (OkHttpClient.Builder.() -> Unit)? = null) { PlaybackHttpClient.create(source, observer, policy, configure).newCall(request).execute().use { } }
     private fun source(url: String, format: SourceFormat = SourceFormat.UNKNOWN, headers: Map<String, String> = emptyMap()) = MediaSource("id", "Synthetic", url, format, headers = headers, providerName = "Synthetic Provider")
     private fun fixture(name: String) = checkNotNull(javaClass.classLoader?.getResource("fixtures/playback/$name")).readText()

@@ -26,16 +26,16 @@ import com.hkiptv.lab.data.model.SourceFormat
 import com.hkiptv.lab.player.*
 
 @SuppressLint("UnsafeOptInUsageError")
-@Composable fun PlayerScreen(source: MediaSource?, back: () -> Unit) {
+@Composable fun PlayerScreen(source: MediaSource?, experimentalHttpPlayback: Boolean, back: () -> Unit) {
     val context = LocalContext.current
-    val observer = remember(source) { PlaybackNetworkObserver() }
+    val observer = remember(source, experimentalHttpPlayback) { PlaybackNetworkObserver() }
     var error by remember(source) { mutableStateOf<String?>(null) }
     var diagnostic by remember(source) { mutableStateOf<PlaybackDiagnostic?>(null) }
     var showDiagnostic by remember(source) { mutableStateOf(false) }
     var stage by remember(source) { mutableStateOf("preparação") }
-    val player = remember(source) {
+    val player = remember(source, experimentalHttpPlayback) {
         source?.let { selected ->
-            val httpClient = PlaybackHttpClient.create(selected, observer)
+            val httpClient = PlaybackHttpClient.create(selected, observer, PlaybackRedirectPolicy(experimentalHttpEnabled = experimentalHttpPlayback))
             val dataSource = OkHttpDataSource.Factory(httpClient)
             ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(dataSource)).build().apply {
                 val item = MediaItem.Builder().setUri(selected.url).apply {

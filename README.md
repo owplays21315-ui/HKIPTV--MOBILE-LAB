@@ -52,6 +52,14 @@ Provedores somente de streams são aceitos e podem fornecer fontes para itens de
 
 O APK de desenvolvimento é criado em `app/build/outputs/apk/debug/app-debug.apk`. Ele é assinado apenas com a chave de depuração local e não deve ser publicado.
 
+## Reprodução HTTP experimental
+
+O player aceita HTTPS normalmente. Para testar uma fonte HTTP direta ou um redirecionamento HTTPS → HTTP, abra **Ajustes** e ative **Reprodução HTTP experimental**. A opção fica desligada por padrão, é salva somente no dispositivo e não altera as requisições de manifests.
+
+Como os hosts de mídia são dinâmicos, o Android exige permissão cleartext no processo inteiro. O Lab declara essa permissão no manifest, mas o cliente usado pelo player continua bloqueando HTTP enquanto a opção estiver desligada. Mesmo com a opção ativa, cada destino e cada resolução DNS são validados; loopback, redes privadas, link-local, multicast, metadados de nuvem, esquemas não HTTP(S), loops e excesso de redirecionamentos permanecem bloqueados.
+
+`Authorization`, `Cookie`, `Proxy-Authorization` e headers que aparentem carregar tokens, sessões ou segredos não são encaminhados em mudança de host ou downgrade HTTPS → HTTP. Uma fonte que dependa dessas credenciais pode não reproduzir; o diagnóstico técnico informa a retenção sem exibir valores, URLs completas ou parâmetros.
+
 ## Baixar o APK pelo GitHub no Android
 
 O workflow **HK IPTV Mobile Lab - Debug APK** executa testes, lint e compilação a cada push na branch `main`, ou manualmente pela aba **Actions**. O APK só é publicado como artifact quando todas as verificações passam.
@@ -65,10 +73,13 @@ O workflow **HK IPTV Mobile Lab - Debug APK** executa testes, lint e compilaçã
 
 É necessário estar conectado ao GitHub para baixar artifacts. O artifact é mantido por 14 dias. Trata-se de uma compilação de desenvolvimento, assinada somente com a chave de debug gerada pelo GitHub Actions; nenhuma release pública ou chave de produção é usada.
 
-## Limitações da Fase 1
+## Limitações conhecidas
 
 - Protocolo JSON é intencionalmente pequeno e ainda não possui paginação.
 - Player suporta MP4 e HLS; DRM e legendas externas ainda não são suportados.
 - Headers declarados são preservados, mas não existe editor de headers/credenciais na interface.
 - Sem cache de catálogo, imagens de pôster ou reprodução offline.
 - Testes são JVM e sintéticos; testes instrumentados/em dispositivo ainda não foram adicionados.
+- HTTP não oferece confidencialidade nem garantia contra alteração do conteúdo em trânsito.
+- A defesa contra DNS rebinding bloqueia mudanças de endereço durante uma tentativa; alguns serviços com DNS muito dinâmico podem exigir nova tentativa.
+- A permissão cleartext do Android é global para o processo por limitação da plataforma, embora o uso esteja restrito pelo cliente do player e pelo ajuste opt-in.

@@ -67,9 +67,18 @@ import com.hkiptv.lab.ui.AppUiState
     else LazyColumn { items(sources, key = { it.id + it.url.hashCode() }) { source -> ListItem(headlineContent = { Text(source.name) }, modifier = Modifier.clickable { play(source) }, supportingContent = { Text(listOfNotNull(source.quality, source.description, source.format.name).joinToString(" • ")) }, trailingContent = { Text("Reproduzir", color = MaterialTheme.colorScheme.primary) }) } }
 }
 
-@Composable fun SettingsScreen() = Page("Configurações") {
+@Composable fun SettingsScreen(experimentalHttpPlayback: Boolean, setExperimentalHttpPlayback: (Boolean) -> Unit) = Page("Configurações") {
     Text("HK IPTV Mobile Lab 0.1.0", fontWeight = FontWeight.Bold)
     Text("Cliente de testes independente. Dados e provedores permanecem neste dispositivo.", Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    HorizontalDivider(Modifier.padding(vertical = 16.dp))
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Reprodução HTTP experimental", fontWeight = FontWeight.Bold)
+            Text("Permite mídia e redirecionamentos HTTP somente no player do Lab.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = experimentalHttpPlayback, onCheckedChange = setExperimentalHttpPlayback)
+    }
+    if (experimentalHttpPlayback) Text("Aviso: conexões HTTP não são criptografadas. Tokens e credenciais não serão enviados em downgrade ou mudança de host.", Modifier.padding(top = 12.dp), color = MaterialTheme.colorScheme.error)
 }
 
 @Composable private fun EmptyState(message: String) { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
