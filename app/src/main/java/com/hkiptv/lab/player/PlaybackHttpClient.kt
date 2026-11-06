@@ -5,7 +5,18 @@ import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.IOException
 import java.net.*
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+
+enum class PlaybackStopReason {
+    REDIRECT_LIMIT_EXCEEDED, REDIRECT_LOOP, MISSING_LOCATION, INVALID_LOCATION,
+    REDIRECT_BLOCKED, FINAL_HTML_RESPONSE, HTTP_ACCESS_DENIED
+}
+
+data class RedirectHop(
+    val number: Int, val status: Int, val protocol: String, val hostChanged: Boolean,
+    val locationPresent: Boolean, val stopReason: PlaybackStopReason? = null
+)
 
 data class PlaybackNetworkSnapshot(
     val initialStatus: Int? = null, val finalStatus: Int? = null,
@@ -14,29 +25,61 @@ data class PlaybackNetworkSnapshot(
     val crossHostRedirect: Boolean = false, val downgradedToHttp: Boolean = false,
     val redirectCompleted: Boolean = false, val experimentalHttpEnabled: Boolean = false,
     val sensitiveHeadersWithheld: Boolean = false, val connectionFailed: Boolean = false,
-    val redirectFailure: RedirectFailure? = null, val finalContentType: String? = null
+    val redirectFailure: RedirectFailure? = null, val stopReason: PlaybackStopReason? = null,
+    val hops: List<RedirectHop> = emptyList(), val finalContentType: String? = null
 ) { val status: Int? get() = finalStatus ?: initialStatus }
 
-enum class RedirectFailure { CLEARTEXT_DISABLED, PRIVATE_ADDRESS, UNSUPPORTED_SCHEME, MISSING_LOCATION, INVALID_LOCATION, TOO_MANY_REDIRECTS, DNS_REBINDING }
+enum class RedirectFailure { CLEARTEXT_DISABLED, PRIVATE_ADDRESS, UNSUPPORTED_SCHEME, MISSING_LOCATION, INVALID_LOCATION, TOO_MANY_REDIRECTS, REDIRECT_LOOP, DNS_REBINDING }
 data class PlaybackRedirectPolicy(val experimentalHttpEnabled: Boolean = false, val allowPrivateForTests: Boolean = false, val privateHostsAllowedForTests: Set<String> = emptySet(), val maxRedirects: Int = 10, val dns: Dns = Dns.SYSTEM)
 class UnsafePlaybackRedirectException(val reason: RedirectFailure) : IOException("Destino de reprodução bloqueado: $reason")
 
 class PlaybackNetworkObserver {
     private val lock = Any()
     private var value = PlaybackNetworkSnapshot()
-    internal fun start(protocol: String, experimental: Boolean) = synchronized(lock) { value = value.copy(initialProtocol = protocol, finalProtocol = protocol, experimentalHttpEnabled = experimental) }
-    internal fun response(code: Int, protocol: String, contentType: String?) = synchronized(lock) { value = value.copy(initialStatus = value.initialStatus ?: code, finalStatus = code, finalProtocol = protocol, finalContentType = contentType ?: value.finalContentType, redirectCompleted = value.redirectCount > 0 && code !in 300..399) }
+    private val visitedTargets = mutableSetOf<String>()
+    private var previousHost: String? = null
+    internal fun start(url: HttpUrl, experimental: Boolean) = synchronized(lock) {
+        visitedTargets += url.fingerprint()
+        previousHost = url.host
+        value = value.copy(initialProtocol = url.scheme, finalProtocol = url.scheme, experimentalHttpEnabled = experimental)
+    }
+    internal fun response(code: Int, protocol: String, host: String, contentType: String?, locationPresent: Boolean) = synchronized(lock) {
+        val hostChanged = previousHost?.equals(host, true) == false
+        previousHost = host
+        val finalResponse = code !in 300..399
+        val reason = when {
+            finalResponse && contentType.isHtmlContentType() -> PlaybackStopReason.FINAL_HTML_RESPONSE
+            finalResponse && code in setOf(401, 403) -> PlaybackStopReason.HTTP_ACCESS_DENIED
+            else -> value.stopReason
+        }
+        value = value.copy(
+            initialStatus = value.initialStatus ?: code, finalStatus = code, finalProtocol = protocol,
+            finalContentType = contentType ?: value.finalContentType,
+            redirectCompleted = value.redirectCount > 0 && finalResponse && reason == null,
+            stopReason = reason,
+            hops = value.hops + RedirectHop(value.hops.size + 1, code, protocol, hostChanged, locationPresent, reason)
+        )
+    }
+    internal fun registerTarget(target: HttpUrl): Boolean = synchronized(lock) { visitedTargets.add(target.fingerprint()) }
     internal fun redirect(crossHost: Boolean, downgrade: Boolean) = synchronized(lock) { value = value.copy(redirectCount = value.redirectCount + 1, redirected = true, crossHostRedirect = value.crossHostRedirect || crossHost, downgradedToHttp = value.downgradedToHttp || downgrade, redirectCompleted = false) }
     internal fun headersWithheld() = synchronized(lock) { value = value.copy(sensitiveHeadersWithheld = true) }
-    internal fun redirectFailure(reason: RedirectFailure, status: Int?) = synchronized(lock) { value = value.copy(initialStatus = value.initialStatus ?: status, finalStatus = status ?: value.finalStatus, redirectFailure = reason, redirectCompleted = false) }
-    internal fun connectionFailure(loop: Boolean = false) = synchronized(lock) { value = value.copy(connectionFailed = true, redirectFailure = if (loop) RedirectFailure.TOO_MANY_REDIRECTS else value.redirectFailure, redirectCompleted = false) }
+    internal fun redirectFailure(reason: RedirectFailure, status: Int?) = synchronized(lock) {
+        val stopReason = reason.toStopReason()
+        val hops = value.hops.toMutableList()
+        if (hops.isNotEmpty()) hops[hops.lastIndex] = hops.last().copy(stopReason = stopReason)
+        value = value.copy(initialStatus = value.initialStatus ?: status, finalStatus = status ?: value.finalStatus, redirectFailure = reason, stopReason = stopReason, hops = hops, redirectCompleted = false)
+    }
+    internal fun connectionFailure(redirectLimit: Boolean = false) = synchronized(lock) {
+        val reason = if (redirectLimit) RedirectFailure.TOO_MANY_REDIRECTS else value.redirectFailure
+        value = value.copy(connectionFailed = true, redirectFailure = reason, stopReason = reason?.toStopReason() ?: value.stopReason, redirectCompleted = false)
+    }
     fun snapshot(): PlaybackNetworkSnapshot = synchronized(lock) { value }
 }
 
 object PlaybackHttpClient {
     fun create(source: MediaSource, observer: PlaybackNetworkObserver, policy: PlaybackRedirectPolicy = PlaybackRedirectPolicy(), configure: (OkHttpClient.Builder.() -> Unit)? = null): OkHttpClient {
         val original = source.url.toHttpUrl()
-        observer.start(original.scheme, policy.experimentalHttpEnabled)
+        observer.start(original, policy.experimentalHttpEnabled)
         val safeDns = SafePlaybackDns(policy, observer)
         val builder = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
             .followRedirects(true).followSslRedirects(true).dns(safeDns)
@@ -61,7 +104,7 @@ object PlaybackHttpClient {
                 }
                 if (crossHost || downgrade) chain.request().headers.names().filter(String::isSensitiveHeader).forEach { requestBuilder.removeHeader(it); observer.headersWithheld() }
                 val response = chain.proceed(requestBuilder.build())
-                observer.response(response.code, requestUrl.scheme, response.header("Content-Type")?.substringBefore(';')?.trim())
+                observer.response(response.code, requestUrl.scheme, requestUrl.host, response.header("Content-Type")?.substringBefore(';')?.trim(), !response.header("Location").isNullOrBlank())
                 if (response.code in redirectCodes) validateRedirect(response, safeDns, observer, policy)
                 response
             }
@@ -76,11 +119,12 @@ object PlaybackHttpClient {
 
     private fun validateRedirect(response: Response, dns: SafePlaybackDns, observer: PlaybackNetworkObserver, policy: PlaybackRedirectPolicy) {
         val location = response.header("Location")
-        if (location.isNullOrBlank()) { observer.redirectFailure(RedirectFailure.MISSING_LOCATION, response.code); return }
+        if (location.isNullOrBlank()) block(RedirectFailure.MISSING_LOCATION, response.code, observer)
         val target = response.request.url.resolve(location) ?: block(RedirectFailure.INVALID_LOCATION, response.code, observer)
         if (target.scheme !in setOf("http", "https")) block(RedirectFailure.UNSUPPORTED_SCHEME, response.code, observer)
         if (target.scheme == "http" && !policy.experimentalHttpEnabled) block(RedirectFailure.CLEARTEXT_DISABLED, response.code, observer)
         dns.validateRedirectTarget(target.host, response.code)
+        if (!observer.registerTarget(target)) block(RedirectFailure.REDIRECT_LOOP, response.code, observer)
         observer.redirect(!target.host.equals(response.request.url.host, true), response.request.url.isHttps && !target.isHttps)
         if (observer.snapshot().redirectCount > policy.maxRedirects) block(RedirectFailure.TOO_MANY_REDIRECTS, response.code, observer)
     }
@@ -129,6 +173,17 @@ private fun String.isSensitiveHeader(): Boolean {
         value.contains("secret") || value.contains("credential") || value.contains("api-key") ||
         value.contains("apikey") || value.contains("session") || value.startsWith("x-auth-")
 }
+private fun RedirectFailure.toStopReason() = when (this) {
+    RedirectFailure.TOO_MANY_REDIRECTS -> PlaybackStopReason.REDIRECT_LIMIT_EXCEEDED
+    RedirectFailure.REDIRECT_LOOP -> PlaybackStopReason.REDIRECT_LOOP
+    RedirectFailure.MISSING_LOCATION -> PlaybackStopReason.MISSING_LOCATION
+    RedirectFailure.INVALID_LOCATION -> PlaybackStopReason.INVALID_LOCATION
+    else -> PlaybackStopReason.REDIRECT_BLOCKED
+}
+private fun String?.isHtmlContentType() = this?.lowercase()?.let { it == "text/html" || it == "application/xhtml+xml" } == true
+private fun HttpUrl.fingerprint(): String = MessageDigest.getInstance("SHA-256")
+    .digest(toString().toByteArray(Charsets.UTF_8))
+    .joinToString("") { "%02x".format(it) }
 private fun String.isBlockedHostname() = equals("localhost", true) || endsWith(".localhost", true) || endsWith(".local", true) || equals("metadata.google.internal", true) || equals("metadata", true)
 private fun InetAddress.isBlockedPlaybackAddress(): Boolean {
     if (isAnyLocalAddress || isLoopbackAddress || isLinkLocalAddress || isSiteLocalAddress || isMulticastAddress) return true

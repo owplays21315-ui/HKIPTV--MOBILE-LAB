@@ -100,6 +100,20 @@ class PlaybackHttpClientTest {
         } finally { secure.shutdown() }
     }
 
+    @Test fun mixedHttpsHttpHttpsChainEndsInMp4() {
+        val tls = tlsSetup(); val secure = MockWebServer().apply { useHttps(tls.server.sslSocketFactory(), false); start() }
+        try {
+            secure.enqueue(redirect(server.url("/plain-step").toString()))
+            server.enqueue(redirect(secure.url("/final.mp4").toString(), 302))
+            secure.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "video/mp4").setBody("mp4"))
+            val observer = PlaybackNetworkObserver()
+            execute(source(secure.url("/start.mp4").toString(), SourceFormat.MP4), observer, testPolicy(), configure = tls.configure)
+            val snapshot = observer.snapshot()
+            assertEquals(listOf("https", "http", "https"), snapshot.hops.map { it.protocol })
+            assertEquals(2, snapshot.redirectCount); assertTrue(snapshot.redirectCompleted)
+        } finally { secure.shutdown() }
+    }
+
     @Test fun crossHostHttpsRedirectIsFollowedWithoutSensitiveHeaders() {
         val tls = tlsSetup(); val second = MockWebServer(); server.shutdown(); server = MockWebServer().apply { useHttps(tls.server.sslSocketFactory(), false); start() }; second.useHttps(tls.server.sslSocketFactory(), false); second.start()
         try {
@@ -111,15 +125,60 @@ class PlaybackHttpClientTest {
         } finally { second.shutdown() }
     }
 
-    @Test fun circularRedirectIsLimited() {
-        repeat(8) { server.enqueue(redirect(server.url("/loop").toString())) }
-        val observer = PlaybackNetworkObserver(); assertFails { execute(source(server.url("/loop").toString()), observer, testPolicy(maxRedirects = 3)) }
-        assertEquals(RedirectFailure.TOO_MANY_REDIRECTS, observer.snapshot().redirectFailure); assertEquals(4, observer.snapshot().redirectCount)
+    @Test fun immediateCircularRedirectIsDetectedAsLoop() {
+        server.enqueue(redirect(server.url("/loop").toString()))
+        val observer = PlaybackNetworkObserver(); assertFails { execute(source(server.url("/loop").toString()), observer, testPolicy()) }
+        assertEquals(RedirectFailure.REDIRECT_LOOP, observer.snapshot().redirectFailure)
+        assertEquals(PlaybackStopReason.REDIRECT_LOOP, observer.snapshot().stopReason)
     }
 
     @Test fun redirectWithoutLocationIsDiagnosed() {
-        server.enqueue(MockResponse().setResponseCode(307)); val observer = PlaybackNetworkObserver(); execute(source(server.url("/media").toString()), observer, testPolicy())
-        assertEquals(RedirectFailure.MISSING_LOCATION, observer.snapshot().redirectFailure); assertEquals(307, observer.snapshot().finalStatus); assertFalse(observer.snapshot().redirectCompleted)
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Content-Type", "text/html")); val observer = PlaybackNetworkObserver()
+        assertFails { execute(source(server.url("/media").toString()), observer, testPolicy()) }
+        assertEquals(RedirectFailure.MISSING_LOCATION, observer.snapshot().redirectFailure); assertEquals(302, observer.snapshot().finalStatus); assertFalse(observer.snapshot().redirectCompleted)
+    }
+
+    @Test fun threeRedirectChainEndsInMp4() { assertLegitimateChain(3) }
+    @Test fun fourRedirectChainEndsInMp4() { assertLegitimateChain(4) }
+    @Test fun eightRedirectChainEndsInMp4() { assertLegitimateChain(8) }
+    @Test fun tenRedirectChainEndsInMp4() { assertLegitimateChain(10) }
+
+    @Test fun redirectLimitIsReportedSeparatelyFromLoop() {
+        repeat(11) { index -> server.enqueue(redirect(server.url("/step-" + (index + 1)).toString())) }
+        val observer = PlaybackNetworkObserver()
+        assertFails { execute(source(server.url("/start").toString()), observer, testPolicy(maxRedirects = 10)) }
+        assertEquals(PlaybackStopReason.REDIRECT_LIMIT_EXCEEDED, observer.snapshot().stopReason)
+        assertEquals(11, observer.snapshot().redirectCount)
+    }
+
+    @Test fun loopBetweenTwoServersIsDetected() {
+        val second = MockWebServer().apply { start() }
+        try {
+            val initial = server.url("/start")
+            server.enqueue(redirect(second.url("/other").toString().replace("localhost", "127.0.0.1")))
+            second.enqueue(redirect(initial.toString()))
+            val observer = PlaybackNetworkObserver()
+            assertFails { execute(source(initial.toString()), observer, testPolicy()) }
+            assertEquals(PlaybackStopReason.REDIRECT_LOOP, observer.snapshot().stopReason)
+            assertEquals(2, observer.snapshot().hops.size)
+            assertTrue(observer.snapshot().hops[1].hostChanged)
+        } finally { second.shutdown() }
+    }
+
+    @Test fun finalHtmlResponseIsNotTreatedAsVideo() {
+        server.enqueue(redirect(server.url("/gate").toString()))
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "text/html").setBody("<html>access page</html>"))
+        val observer = PlaybackNetworkObserver(); execute(source(server.url("/start").toString(), SourceFormat.MP4), observer, testPolicy())
+        assertEquals(PlaybackStopReason.FINAL_HTML_RESPONSE, observer.snapshot().stopReason)
+        assertFalse(observer.snapshot().redirectCompleted)
+    }
+
+    @Test fun intermediateHtmlRedirectContinuesToMp4() {
+        server.enqueue(redirect(server.url("/gate").toString()).setHeader("Content-Type", "text/html"))
+        server.enqueue(redirect(server.url("/final.mp4").toString(), 302).setHeader("Content-Type", "text/html"))
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "video/mp4").setBody("mp4"))
+        val observer = PlaybackNetworkObserver(); execute(source(server.url("/start").toString(), SourceFormat.MP4), observer, testPolicy())
+        assertTrue(observer.snapshot().redirectCompleted); assertNull(observer.snapshot().stopReason); assertEquals(2, observer.snapshot().redirectCount)
     }
 
     @Test fun invalidRedirectLocationIsDiagnosed() {
@@ -192,7 +251,13 @@ class PlaybackHttpClientTest {
     }
 
     private fun assertSuccessful(path: String, format: SourceFormat, body: String, contentType: String) { server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", contentType).setBody(body)); val observer = PlaybackNetworkObserver(); execute(source(server.url(path).toString(), format), observer, testPolicy()); assertEquals(200, observer.snapshot().finalStatus) }
-    private fun assertStatusAfterRedirect(code: Int, category: PlaybackFailureCategory) { server.enqueue(redirect(server.url("/final").toString())); server.enqueue(MockResponse().setResponseCode(code)); val observer = PlaybackNetworkObserver(); execute(source(server.url("/start").toString()), observer, testPolicy()); val snapshot = observer.snapshot(); assertEquals(307, snapshot.initialStatus); assertEquals(code, snapshot.finalStatus); assertEquals(category, PlaybackDiagnostics.category(code)) }
+    private fun assertStatusAfterRedirect(code: Int, category: PlaybackFailureCategory) { server.enqueue(redirect(server.url("/final").toString())); server.enqueue(MockResponse().setResponseCode(code)); val observer = PlaybackNetworkObserver(); execute(source(server.url("/start").toString()), observer, testPolicy()); val snapshot = observer.snapshot(); assertEquals(307, snapshot.initialStatus); assertEquals(code, snapshot.finalStatus); assertEquals(category, PlaybackDiagnostics.category(code)); if (code in setOf(401, 403)) assertEquals(PlaybackStopReason.HTTP_ACCESS_DENIED, snapshot.stopReason) }
+    private fun assertLegitimateChain(count: Int) {
+        repeat(count) { index -> server.enqueue(redirect(server.url("/step-" + (index + 1)).toString(), if (index % 2 == 0) 307 else 302)) }
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "video/mp4").setBody("mp4"))
+        val observer = PlaybackNetworkObserver(); execute(source(server.url("/start").toString(), SourceFormat.MP4), observer, testPolicy())
+        val snapshot = observer.snapshot(); assertEquals(count, snapshot.redirectCount); assertTrue(snapshot.redirectCompleted); assertNull(snapshot.stopReason); assertEquals(count + 1, snapshot.hops.size)
+    }
     private fun assertHttpsToHttp(finalCode: Int) {
         val tls = tlsSetup(); val secure = MockWebServer().apply { useHttps(tls.server.sslSocketFactory(), false); start() }
         try {
@@ -205,7 +270,7 @@ class PlaybackHttpClientTest {
     }
     private fun assertRedirect(value: PlaybackNetworkSnapshot, initial: Int, final: Int, count: Int, completed: Boolean) { assertEquals(initial, value.initialStatus); assertEquals(final, value.finalStatus); assertEquals(count, value.redirectCount); assertEquals(completed, value.redirectCompleted) }
     private fun redirect(location: String, code: Int = 307) = MockResponse().setResponseCode(code).setHeader("Location", location)
-    private fun testPolicy(maxRedirects: Int = 20) = PlaybackRedirectPolicy(experimentalHttpEnabled = true, allowPrivateForTests = true, maxRedirects = maxRedirects)
+    private fun testPolicy(maxRedirects: Int = 10) = PlaybackRedirectPolicy(experimentalHttpEnabled = true, allowPrivateForTests = true, maxRedirects = maxRedirects)
     private fun execute(source: MediaSource, observer: PlaybackNetworkObserver, policy: PlaybackRedirectPolicy = PlaybackRedirectPolicy(), request: Request = Request.Builder().url(source.url).get().build(), configure: (OkHttpClient.Builder.() -> Unit)? = null) { PlaybackHttpClient.create(source, observer, policy, configure).newCall(request).execute().use { } }
     private fun source(url: String, format: SourceFormat = SourceFormat.UNKNOWN, headers: Map<String, String> = emptyMap()) = MediaSource("id", "Synthetic", url, format, headers = headers, providerName = "Synthetic Provider")
     private fun fixture(name: String) = checkNotNull(javaClass.classLoader?.getResource("fixtures/playback/$name")).readText()

@@ -30,7 +30,21 @@ import com.hkiptv.lab.player.PlaybackDiagnostic
         DiagnosticRow("Modo HTTP experimental", if (diagnostic.experimentalHttpEnabled) "Ativado" else "Desativado")
         DiagnosticRow("Redirecionamento concluído", if (diagnostic.redirectCompleted) "Sim" else "Não")
         DiagnosticRow("Resultado", diagnostic.result)
+        diagnostic.stopReason?.let { DiagnosticRow("Motivo da interrupção", it.name) }
         diagnostic.redirectFailure?.let { DiagnosticRow("Falha do redirecionamento", it.name) }
+        if (diagnostic.hops.isNotEmpty()) {
+            HorizontalDivider()
+            Text("Cadeia HTTP", fontWeight = FontWeight.Bold)
+            diagnostic.hops.forEach { hop ->
+                val details = listOf(
+                    hop.status.toString(), hop.protocol.uppercase(),
+                    "host " + if (hop.hostChanged) "alterado" else "igual",
+                    "Location " + if (hop.locationPresent) "presente" else "ausente",
+                    hop.stopReason?.name
+                ).filterNotNull().joinToString(" • ")
+                DiagnosticRow("Salto " + hop.number, details)
+            }
+        }
         HorizontalDivider()
         Text("Headers fornecidos pelo provedor", fontWeight = FontWeight.Bold)
         DiagnosticRow("Quantidade", diagnostic.headers.total.toString())

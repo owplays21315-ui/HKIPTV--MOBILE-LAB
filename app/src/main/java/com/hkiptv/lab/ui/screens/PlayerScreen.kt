@@ -48,6 +48,9 @@ import com.hkiptv.lab.player.*
                         val currentStage = if (currentPosition <= 0) "abertura" else "reprodução"
                         val details = PlaybackDiagnostics.snapshot(selected, observer.snapshot(), currentStage, status, failed = true, playbackErrorCode = playbackError.errorCode)
                         diagnostic = details; error = PlaybackDiagnostics.userMessage(details)
+                        details.hops.forEach { hop ->
+                            Log.e("HKPlayerHop", "hop=" + hop.number + "; status=" + hop.status + "; protocol=" + hop.protocol + "; hostChanged=" + hop.hostChanged + "; location=" + hop.locationPresent + "; stop=" + (hop.stopReason?.name ?: "none"))
+                        }
                         Log.e("HKPlayer", "provider=${details.provider}; stage=${details.stage}; format=${details.format}; initialStatus=${details.initialStatus ?: "n/a"}; finalStatus=${details.finalStatus ?: "n/a"}; redirects=${details.redirectCount}; hostChanged=${details.crossHostRedirect}; completed=${details.redirectCompleted}; category=${details.category}")
                     }
                     override fun onPlaybackStateChanged(state: Int) {

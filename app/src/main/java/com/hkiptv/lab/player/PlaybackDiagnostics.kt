@@ -36,6 +36,8 @@ data class PlaybackDiagnostic(
     val experimentalHttpEnabled: Boolean,
     val sensitiveHeadersWithheld: Boolean,
     val redirectFailure: RedirectFailure?,
+    val stopReason: PlaybackStopReason?,
+    val hops: List<RedirectHop>,
     val finalContentType: String?,
     val headers: HeaderPresence,
     val result: String
@@ -56,15 +58,32 @@ object PlaybackDiagnostics {
     fun snapshot(source: MediaSource, network: PlaybackNetworkSnapshot, stage: String, statusOverride: Int? = null, failed: Boolean = false, playbackErrorCode: Int? = null): PlaybackDiagnostic {
         val finalStatus = network.finalStatus ?: statusOverride
         val status = finalStatus ?: network.initialStatus
-        val category = when { network.redirectFailure != null -> PlaybackFailureCategory.REDIRECT; playbackErrorCode in formatErrorCodes -> PlaybackFailureCategory.FORMAT; playbackErrorCode in decodingErrorCodes -> PlaybackFailureCategory.DECODING; status == null && !network.connectionFailed && !failed -> PlaybackFailureCategory.NONE; else -> category(status) }
+        val category = when {
+            network.stopReason == PlaybackStopReason.FINAL_HTML_RESPONSE -> PlaybackFailureCategory.FORMAT
+            network.redirectFailure != null -> PlaybackFailureCategory.REDIRECT
+            playbackErrorCode in formatErrorCodes -> PlaybackFailureCategory.FORMAT
+            playbackErrorCode in decodingErrorCodes -> PlaybackFailureCategory.DECODING
+            status == null && !network.connectionFailed && !failed -> PlaybackFailureCategory.NONE
+            else -> category(status)
+        }
         val detectedFinal = SourceFormatDetector.detect("", network.finalContentType)
         val effectiveFormat = detectedFinal.takeUnless { it == SourceFormat.UNKNOWN } ?: source.format
         val result = when { failed || category != PlaybackFailureCategory.NONE -> "Falha"; stage == "concluído" -> "Concluído"; status in setOf(200, 206) -> "Conectado"; else -> "Pendente" }
-        return PlaybackDiagnostic(source.providerName ?: "Não informado", source.quality ?: "Não informada", source.format, effectiveFormat, network.initialStatus ?: statusOverride, finalStatus, network.initialProtocol, network.finalProtocol, network.redirectCount, category, stage, network.redirected, network.crossHostRedirect, network.downgradedToHttp, network.redirectCompleted, network.experimentalHttpEnabled, network.sensitiveHeadersWithheld, network.redirectFailure, network.finalContentType, HeaderPresence.from(source.headers), result)
+        return PlaybackDiagnostic(source.providerName ?: "Não informado", source.quality ?: "Não informada", source.format, effectiveFormat, network.initialStatus ?: statusOverride, finalStatus, network.initialProtocol, network.finalProtocol, network.redirectCount, category, stage, network.redirected, network.crossHostRedirect, network.downgradedToHttp, network.redirectCompleted, network.experimentalHttpEnabled, network.sensitiveHeadersWithheld, network.redirectFailure, network.stopReason, network.hops, network.finalContentType, HeaderPresence.from(source.headers), result)
     }
 
     fun userMessage(diagnostic: PlaybackDiagnostic): String {
         if (diagnostic.sensitiveHeadersWithheld && diagnostic.status in setOf(401, 403)) return "A reprodução exige credenciais que não podem ser transmitidas com segurança após o redirecionamento"
+        when (diagnostic.stopReason) {
+            PlaybackStopReason.REDIRECT_LIMIT_EXCEEDED -> return "Limite seguro de redirecionamentos excedido"
+            PlaybackStopReason.REDIRECT_LOOP -> return "Loop de redirecionamento detectado"
+            PlaybackStopReason.MISSING_LOCATION -> return "Redirecionamento sem header Location"
+            PlaybackStopReason.INVALID_LOCATION -> return "Location do redirecionamento é inválido"
+            PlaybackStopReason.REDIRECT_BLOCKED -> return "Próximo destino bloqueado pela política de segurança"
+            PlaybackStopReason.FINAL_HTML_RESPONSE -> return "O destino final retornou HTML em vez de mídia"
+            PlaybackStopReason.HTTP_ACCESS_DENIED -> return "Acesso à mídia negado pelo servidor"
+            null -> Unit
+        }
         if (diagnostic.category == PlaybackFailureCategory.FORMAT) return "Formato de mídia incompatível ou resposta inesperada"
         if (diagnostic.category == PlaybackFailureCategory.DECODING) return "Falha ao decodificar a mídia"
         return when (diagnostic.status) {
@@ -79,6 +98,7 @@ object PlaybackDiagnostics {
             RedirectFailure.PRIVATE_ADDRESS -> "Redirecionamento bloqueado para endereço privado"
             RedirectFailure.UNSUPPORTED_SCHEME -> "Protocolo de mídia não suportado"
             RedirectFailure.DNS_REBINDING -> "Destino bloqueado por mudança insegura de DNS"
+            RedirectFailure.REDIRECT_LOOP -> "Loop de redirecionamento detectado"
             RedirectFailure.MISSING_LOCATION -> "HTTP ${diagnostic.status} — redirecionamento sem destino válido"
             RedirectFailure.INVALID_LOCATION -> "HTTP ${diagnostic.status} — endereço de redirecionamento inválido"
             RedirectFailure.TOO_MANY_REDIRECTS -> "Loop ou excesso de redirecionamentos"
